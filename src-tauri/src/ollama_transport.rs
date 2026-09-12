@@ -214,19 +214,45 @@ impl OllamaClient {
         request: &OllamaChatRequest,
         cancel_rx: &mut oneshot::Receiver<()>,
     ) -> Result<String, OllamaTransportError> {
+        self.complete_chat_inner(request, Some(cancel_rx)).await
+    }
+
+    pub async fn complete_chat_uncancelled(
+        &self,
+        request: &OllamaChatRequest,
+    ) -> Result<String, OllamaTransportError> {
+        self.complete_chat_inner(request, None).await
+    }
+
+    async fn complete_chat_inner(
+        &self,
+        request: &OllamaChatRequest,
+        mut cancel_rx: Option<&mut oneshot::Receiver<()>>,
+    ) -> Result<String, OllamaTransportError> {
         let mut request = request.clone();
         request.stream = false;
-        let response = tokio::select! {
-            _ = &mut *cancel_rx => return Err(OllamaTransportError::Cancelled),
-            result = self.authenticated(self.client.post(self.endpoint("chat")))
-                .json(&request)
-                .send() => result,
+        let response = match cancel_rx.as_mut() {
+            Some(cancel_rx) => tokio::select! {
+                _ = &mut **cancel_rx => return Err(OllamaTransportError::Cancelled),
+                result = self.authenticated(self.client.post(self.endpoint("chat")))
+                    .json(&request)
+                    .send() => result,
+            },
+            None => {
+                self.authenticated(self.client.post(self.endpoint("chat")))
+                    .json(&request)
+                    .send()
+                    .await
+            }
         }
         .map_err(|error| OllamaTransportError::Request(sanitize_detail(&error.to_string())))?;
         let response = self.check_response(response).await?;
-        let value: OllamaStreamChunk = tokio::select! {
-            _ = &mut *cancel_rx => return Err(OllamaTransportError::Cancelled),
-            result = response.json() => result,
+        let value: OllamaStreamChunk = match cancel_rx.as_mut() {
+            Some(cancel_rx) => tokio::select! {
+                _ = &mut **cancel_rx => return Err(OllamaTransportError::Cancelled),
+                result = response.json() => result,
+            },
+            None => response.json().await,
         }
         .map_err(|error| {
             OllamaTransportError::MalformedStream(sanitize_detail(&error.to_string()))
@@ -394,11 +420,17 @@ pub fn parse_ndjson_line(line: &str) -> Result<OllamaStreamChunk, OllamaTranspor
 }
 
 fn sanitize_detail(value: &str) -> String {
-    value
-        .replace("authorization", "authentication")
-        .chars()
-        .take(4_000)
-        .collect()
+    let normalized = value.replace("authorization", "authentication");
+    let end = if normalized.len() <= 4_000 {
+        normalized.len()
+    } else {
+        let mut end = 4_000;
+        while !normalized.is_char_boundary(end) {
+            end -= 1;
+        }
+        end
+    };
+    normalized[..end].to_string()
 }
 
 fn sanitize_detail_with_secret(value: &str, secret: Option<&str>) -> String {
@@ -412,8 +444,11 @@ fn sanitize_detail_with_secret(value: &str, secret: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_base_url, parse_ndjson_line, sanitize_detail_with_secret, validate_model_tag,
+        normalize_base_url, parse_ndjson_line, sanitize_detail, sanitize_detail_with_secret,
+        validate_model_tag, OllamaChatMessage, OllamaChatRequest, OllamaClient,
+        OllamaTransportError,
     };
+    use tokio::sync::oneshot;
 
     #[test]
     fn normalizes_api_suffix_and_trailing_slashes() {
@@ -464,5 +499,37 @@ mod tests {
             sanitize_detail_with_secret("remote returned token=super-secret", Some("super-secret"));
         assert!(!detail.contains("super-secret"));
         assert!(detail.contains("[redacted]"));
+    }
+
+    #[test]
+    fn truncates_error_details_at_a_utf8_boundary() {
+        let ascii = sanitize_detail(&"x".repeat(4_100));
+        assert_eq!(ascii.len(), 4_000);
+
+        let unicode = sanitize_detail(&"界".repeat(2_000));
+        assert!(unicode.len() <= 4_000);
+        assert!(unicode.is_char_boundary(unicode.len()));
+        assert!(unicode.chars().count() < 2_000);
+    }
+
+    #[tokio::test]
+    async fn cancelled_completion_stops_before_transport_work() {
+        let client =
+            OllamaClient::new("http://127.0.0.1:11434", None).expect("client should be valid");
+        let request = OllamaChatRequest {
+            model: "llama3.2:latest".into(),
+            messages: vec![OllamaChatMessage::text("user", "hello")],
+            stream: false,
+            format: None,
+        };
+        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        drop(cancel_tx);
+
+        let result = client.complete_chat(&request, &mut cancel_rx).await;
+
+        assert!(matches!(
+            result,
+            Err(OllamaTransportError::Cancelled)
+        ));
     }
 }

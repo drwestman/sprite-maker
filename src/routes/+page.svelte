@@ -27,7 +27,7 @@
   import WorktreeDialog from "$lib/components/WorktreeDialog.svelte";
   import LogoMark from "$lib/components/LogoMark.svelte";
   import { api } from "$lib/api";
-  import { normalizeGenerationProfile, slashCommand } from "$lib/generation-profiles";
+  import { normalizeGenerationProfile, selectProviderModel, slashCommand } from "$lib/generation-profiles";
   import { buildSpriteGroups, type SpriteGroup } from "$lib/sprite-groups";
   import { parseConversationStyle, parseStylePreset, stylePreset, type ConversationStyleId, type StylePresetId } from "$lib/style-presets";
   import { parseCustomArts, parseCustomSkills, type CustomArtStyle, type CustomSkill } from "$lib/library-types";
@@ -276,11 +276,12 @@
   function providerFor(conversation:Conversation){return providers.find(provider=>provider.id===conversation.provider);}
   async function loadGenerationProfile(conversation:Conversation){
     const saved=await api.getSetting(`conversation-generation:${conversation.id}`);
-    const next=normalizeGenerationProfile(saved,providerFor(conversation)?.modes??[]);
+    const provider=providerFor(conversation);
+    const next=normalizeGenerationProfile(saved,provider?.modes??[]);
     if(conversation.provider==="ollama"){
       const source=saved&&typeof saved==="object"?saved as Record<string,unknown>:{};
       const savedModel=typeof source.model==="string"?source.model.trim():"";
-      next.model=savedModel||providerFor(conversation)?.model||"";
+      next.model=selectProviderModel(savedModel,provider?.model,provider?.modes);
       next.reasoningEffort="";
     }
     return next;

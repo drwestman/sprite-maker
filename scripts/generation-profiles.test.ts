@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GENERATION_PRESETS, normalizeGenerationProfile } from "../src/lib/generation-profiles";
+import { GENERATION_PRESETS, normalizeGenerationProfile, selectProviderModel } from "../src/lib/generation-profiles";
 
 describe("generation profile defaults", () => {
   test("uses a 128 by 128 mid-quality canvas by default", () => {
@@ -16,5 +16,17 @@ describe("generation profile defaults", () => {
     const custom = normalizeGenerationProfile({ profileVersion: 7, quality: "custom", width: 96, height: 80 });
     expect([custom.width, custom.height]).toEqual([96, 80]);
     expect(GENERATION_PRESETS.mid.width).toBe(128);
+  });
+
+  test("selects a saved, provider-default, or first available model in that order", () => {
+    const modes = [
+      { id: "llama3.2:latest", label: "Llama", description: "", defaultReasoningEffort: "", reasoningEfforts: [] },
+      { id: "qwen2.5:latest", label: "Qwen", description: "", defaultReasoningEffort: "", reasoningEfforts: [] },
+    ];
+
+    expect(selectProviderModel("  saved:model  ", "default:model", modes)).toBe("saved:model");
+    expect(selectProviderModel("", "default:model", modes)).toBe("default:model");
+    expect(selectProviderModel("", "", modes)).toBe("llama3.2:latest");
+    expect(selectProviderModel("", "", [])).toBe("");
   });
 });

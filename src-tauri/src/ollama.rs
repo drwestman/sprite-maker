@@ -12,7 +12,6 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::State;
-use tokio::sync::oneshot;
 
 const OLLAMA_PROVIDER_KEY: &str = "ollama";
 const OLLAMA_MAX_REFERENCES: usize = 10;
@@ -387,6 +386,22 @@ pub(crate) fn model_capabilities(model: &OllamaModel) -> ProviderCapabilities {
     capabilities(Some(model))
 }
 
+pub(crate) fn validate_reference_images(
+    model: &OllamaModel,
+    reference_count: usize,
+) -> CommandResult<()> {
+    if reference_count > 0 && !model.vision {
+        return Err(CommandError::new(
+            "ollama_vision_required",
+            format!(
+                "Ollama model `{}` does not support vision; choose a model with the vision capability before attaching references",
+                model.model
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn request(
     model: &OllamaModel,
     messages: Vec<OllamaChatMessage>,
@@ -483,9 +498,8 @@ pub(crate) async fn complete_text_request(
     let settings = load_settings(state)?;
     let client = client(&settings)?;
     let request = request(model, messages, format);
-    let (_cancel_tx, mut cancel_rx) = oneshot::channel();
     client
-        .complete_chat(&request, &mut cancel_rx)
+        .complete_chat_uncancelled(&request)
         .await
         .map_err(transport_error)
 }
@@ -529,6 +543,13 @@ pub fn save_ollama_settings(
     input: OllamaSettingsInput,
     state: State<'_, AppState>,
 ) -> CommandResult<OllamaSettings> {
+    save_ollama_settings_inner(input, &state)
+}
+
+fn save_ollama_settings_inner(
+    input: OllamaSettingsInput,
+    state: &AppState,
+) -> CommandResult<OllamaSettings> {
     let base_url = if input.base_url.trim().is_empty() {
         DEFAULT_OLLAMA_BASE_URL.to_string()
     } else {
@@ -540,7 +561,7 @@ pub fn save_ollama_settings(
     if !model.is_empty() {
         validate_model_tag(&model).map_err(|error| command_error("invalid_ollama_model", error))?;
     }
-    let existing = load_settings(&state)?;
+    let existing = load_settings(state)?;
     let bearer_token = if input.bearer_token.trim().is_empty() {
         existing.bearer_token
     } else {
@@ -575,6 +596,13 @@ pub async fn test_ollama_connection(
     input: Option<OllamaSettingsInput>,
     state: State<'_, AppState>,
 ) -> CommandResult<ProviderConnectionTest> {
+    test_ollama_connection_inner(input, &state).await
+}
+
+async fn test_ollama_connection_inner(
+    input: Option<OllamaSettingsInput>,
+    state: &AppState,
+) -> CommandResult<ProviderConnectionTest> {
     let settings = if let Some(input) = input {
         let base_url = if input.base_url.trim().is_empty() {
             DEFAULT_OLLAMA_BASE_URL.to_string()
@@ -586,7 +614,7 @@ pub async fn test_ollama_connection(
             validate_model_tag(&model)
                 .map_err(|error| command_error("invalid_ollama_model", error))?;
         }
-        let existing = load_settings(&state)?;
+        let existing = load_settings(state)?;
         StoredOllamaSettings {
             base_url: normalize_base_url(&base_url)
                 .map_err(|error| command_error("invalid_ollama_endpoint", error))?,
@@ -598,7 +626,7 @@ pub async fn test_ollama_connection(
             },
         }
     } else {
-        load_settings(&state)?
+        load_settings(state)?
     };
     let client = client(&settings)?;
     let models = discover_models(&client)
@@ -637,8 +665,21 @@ pub async fn test_ollama_connection(
 
 #[cfg(test)]
 mod tests {
-    use super::{capabilities, draft_prompt, model_from_tag, provider_mode, structured_format};
+    use super::{
+        capabilities, draft_prompt, model_from_tag, ollama_status, provider_mode,
+        save_ollama_settings_inner, structured_format, validate_reference_images,
+        test_ollama_connection_inner, OllamaSettingsInput, StoredOllamaSettings,
+    };
     use crate::ollama_transport::{OllamaShowResponse, OllamaTag};
+    use crate::{database, AppState};
+    use std::{
+        collections::HashMap,
+        io::{Read, Write},
+        net::TcpListener,
+        sync::Mutex,
+        thread,
+    };
+    use uuid::Uuid;
 
     #[test]
     fn maps_completion_and_vision_capabilities_to_provider_contract() {
@@ -700,5 +741,181 @@ mod tests {
             structured_format(),
             Some(serde_json::Value::String("json".into()))
         );
+    }
+
+    #[test]
+    fn rejects_reference_images_for_text_only_models_before_request_setup() {
+        let model = model_from_tag(
+            OllamaTag {
+                name: "text:latest".into(),
+                model: None,
+                modified_at: None,
+                size: None,
+                digest: None,
+                details: None,
+            },
+            Some(OllamaShowResponse {
+                capabilities: vec!["completion".into()],
+                details: None,
+                modified_at: None,
+            }),
+        );
+
+        let error = validate_reference_images(&model, 1).expect_err("vision should be required");
+        assert_eq!(error.code, "ollama_vision_required");
+        assert!(validate_reference_images(&model, 0).is_ok());
+    }
+
+    #[test]
+    fn provider_status_exposes_all_discovered_models_not_only_the_default() {
+        let settings = StoredOllamaSettings {
+            base_url: "http://127.0.0.1:11434".into(),
+            model: "vision:latest".into(),
+            bearer_token: String::new(),
+        };
+        let models = vec![
+            model_from_tag(
+                OllamaTag {
+                    name: "text:latest".into(),
+                    model: None,
+                    modified_at: None,
+                    size: None,
+                    digest: None,
+                    details: None,
+                },
+                Some(OllamaShowResponse {
+                    capabilities: vec!["completion".into()],
+                    details: None,
+                    modified_at: None,
+                }),
+            ),
+            model_from_tag(
+                OllamaTag {
+                    name: "vision:latest".into(),
+                    model: None,
+                    modified_at: None,
+                    size: None,
+                    digest: None,
+                    details: None,
+                },
+                Some(OllamaShowResponse {
+                    capabilities: vec!["completion".into(), "vision".into()],
+                    details: None,
+                    modified_at: None,
+                }),
+            ),
+        ];
+
+        let status = ollama_status(
+            settings,
+            models,
+            "ready",
+            "connected".into(),
+            true,
+            Some("http://127.0.0.1:11434".into()),
+        );
+
+        assert_eq!(
+            status
+                .modes
+                .iter()
+                .map(|mode| mode.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["text:latest", "vision:latest"]
+        );
+        assert!(status.capabilities.image_input);
+        assert_eq!(status.model.as_deref(), Some("vision:latest"));
+    }
+
+    #[test]
+    fn saves_normalized_ollama_settings_and_preserves_the_secret_boundary() {
+        let root =
+            std::env::temp_dir().join(format!("sprite-studio-ollama-test-{}", Uuid::new_v4()));
+        let connection = database::open(&root.join("app.sqlite3")).expect("database should open");
+        let state = AppState {
+            db: Mutex::new(connection),
+            cancellers: Mutex::new(HashMap::new()),
+        };
+
+        let settings = save_ollama_settings_inner(
+            OllamaSettingsInput {
+                base_url: "http://127.0.0.1:11434/api/".into(),
+                model: " llama3.2:latest ".into(),
+                bearer_token: "secret-token".into(),
+            },
+            &state,
+        )
+        .expect("settings should save");
+
+        assert_eq!(settings.base_url, "http://127.0.0.1:11434");
+        assert_eq!(settings.model.as_deref(), Some("llama3.2:latest"));
+        assert!(settings.has_token);
+        let stored: String = state
+            .db
+            .lock()
+            .expect("database lock")
+            .query_row(
+                "SELECT settings_json FROM provider_settings WHERE provider='ollama'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("stored settings should exist");
+        assert!(stored.contains("secret-token"));
+        assert!(!stored.contains("\"token\""));
+    }
+
+    #[tokio::test]
+    async fn tests_connection_against_a_reachable_model_endpoint() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test endpoint should bind");
+        let address = listener.local_addr().expect("test endpoint address");
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("request should arrive");
+                let mut request = Vec::new();
+                let mut chunk = [0_u8; 512];
+                loop {
+                    let read = stream.read(&mut chunk).expect("request should read");
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&request);
+                let body = if request.starts_with("GET /api/tags") {
+                    r#"{"models":[{"name":"llama3.2:latest","model":"llama3.2:latest"}]}"#
+                } else {
+                    r#"{"capabilities":["completion"]}"#
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("response should write");
+            }
+        });
+        let root = std::env::temp_dir().join(format!("sprite-studio-ollama-test-{}", Uuid::new_v4()));
+        let connection = database::open(&root.join("app.sqlite3")).expect("database should open");
+        let state = AppState {
+            db: Mutex::new(connection),
+            cancellers: Mutex::new(HashMap::new()),
+        };
+
+        let result = test_ollama_connection_inner(
+            Some(OllamaSettingsInput {
+                base_url: format!("http://{address}"),
+                model: "llama3.2:latest".into(),
+                bearer_token: String::new(),
+            }),
+            &state,
+        )
+        .await
+        .expect("connection should succeed");
+
+        server.join().expect("test endpoint should stop");
+        assert!(result.ok);
+        assert!(result.detail.contains("llama3.2:latest"));
     }
 }

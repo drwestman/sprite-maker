@@ -1172,18 +1172,11 @@ pub async fn start_provider_message(
     }
     let provider_id = conversation.provider.clone();
     let options = options.unwrap_or_default();
-    validate_provider_options(&options)?;
     if provider_id == "ollama" {
-        return start_ollama_message(
-            conversation,
-            prompt,
-            context,
-            options,
-            app,
-            &state,
-        )
-        .await;
+        validate_ollama_options(&options)?;
+        return start_ollama_message(conversation, prompt, context, options, app, &state).await;
     }
+    validate_provider_options(&options)?;
     let executable = find_executable(&provider_id).ok_or_else(|| {
         CommandError::new(
             "provider_unavailable",
@@ -1307,16 +1300,8 @@ async fn start_ollama_message(
     state: &AppState,
 ) -> CommandResult<String> {
     let (client, model) = ollama::selected_model(state, options.model.as_deref()).await?;
+    ollama::validate_reference_images(&model, options.reference_ids.len())?;
     let capabilities = ollama::model_capabilities(&model);
-    if !options.reference_ids.is_empty() && !capabilities.image_input {
-        return Err(CommandError::new(
-            "ollama_vision_required",
-            format!(
-                "Ollama model `{}` does not support vision; choose a model with the vision capability before attaching references",
-                model.model
-            ),
-        ));
-    }
     let (reference_context, reference_paths) = references::prompt_context(
         state,
         &conversation.id,
@@ -1609,12 +1594,7 @@ async fn run_ollama(
             "prompt-draft",
             &draft,
             "completed",
-            serde_json::json!({
-                "provider": "ollama",
-                "handoffProvider": fallback,
-                "handoffStatus": "pending",
-                "command": command,
-            }),
+            ollama_handoff_draft_metadata(fallback, command.as_deref()),
         ) {
             Ok(message) => message,
             Err(error) => {
@@ -1680,11 +1660,7 @@ async fn run_ollama(
             "text",
             "",
             "running",
-            serde_json::json!({
-                "provider": fallback,
-                "handoffFrom": "ollama",
-                "draftMessageId": draft_message.id,
-            }),
+            ollama_handoff_assistant_metadata(fallback, &draft_message.id),
         ) {
             Ok(message) => message,
             Err(error) => {
@@ -1817,6 +1793,29 @@ fn remove_request(state: &AppState, request_id: &str) {
         .lock()
         .ok()
         .map(|mut values| values.remove(request_id));
+}
+
+fn ollama_handoff_draft_metadata(
+    fallback_provider: &str,
+    command: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "provider": "ollama",
+        "handoffProvider": fallback_provider,
+        "handoffStatus": "pending",
+        "command": command,
+    })
+}
+
+fn ollama_handoff_assistant_metadata(
+    fallback_provider: &str,
+    draft_message_id: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "provider": fallback_provider,
+        "handoffFrom": "ollama",
+        "draftMessageId": draft_message_id,
+    })
 }
 
 fn finish_ollama_failure(
@@ -2616,6 +2615,14 @@ fn validate_provider_options(options: &ProviderRequestOptions) -> CommandResult<
             ));
         }
     }
+    validate_provider_request_shape(options)
+}
+
+fn validate_ollama_options(options: &ProviderRequestOptions) -> CommandResult<()> {
+    validate_provider_request_shape(options)
+}
+
+fn validate_provider_request_shape(options: &ProviderRequestOptions) -> CommandResult<()> {
     if let Some(effort) = options.reasoning_effort.as_deref() {
         if !matches!(
             effort,
@@ -2692,15 +2699,20 @@ pub fn cancel_provider_request(
 mod tests {
     use super::{
         append_stream_text, codex_arguments, login_shell_path, login_shell_path_with_timeout,
-        merge_provider_paths, parse_codex_line, parse_stream_line, provider_arguments,
-        provider_environment_path, provider_failure_message, response_reports_generation_failure,
-        validate_provider_options,
+        merge_provider_paths, ollama_handoff_assistant_metadata, ollama_handoff_draft_metadata,
+        parse_codex_line, parse_stream_line, provider_arguments, provider_environment_path,
+        provider_failure_message, remove_request, response_reports_generation_failure,
+        validate_ollama_options, validate_provider_options,
     };
     use crate::models::{GenerationOptions, ProviderRequestOptions};
+    use crate::AppState;
     use std::{
+        collections::HashMap,
         env,
         path::{Path, PathBuf},
+        sync::Mutex,
     };
+    use tokio::sync::oneshot;
 
     #[cfg(unix)]
     #[test]
@@ -3132,5 +3144,53 @@ mod tests {
         let mut pack_options = options;
         pack_options.command = Some("pack".into());
         assert!(validate_provider_options(&pack_options).is_ok());
+    }
+
+    #[test]
+    fn accepts_ollama_model_tags_with_provider_specific_punctuation() {
+        let options = ProviderRequestOptions {
+            model: Some("llama3.2:latest".into()),
+            command: Some("animate".into()),
+            ..ProviderRequestOptions::default()
+        };
+
+        assert!(validate_ollama_options(&options).is_ok());
+        assert!(validate_provider_options(&options).is_err());
+    }
+
+    #[test]
+    fn builds_handoff_metadata_for_pending_drafts_and_execution_messages() {
+        let draft = ollama_handoff_draft_metadata("codex", Some("animate"));
+        assert_eq!(draft["provider"], "ollama");
+        assert_eq!(draft["handoffProvider"], "codex");
+        assert_eq!(draft["handoffStatus"], "pending");
+        assert_eq!(draft["command"], "animate");
+
+        let execution = ollama_handoff_assistant_metadata("codex", "draft-1");
+        assert_eq!(execution["provider"], "codex");
+        assert_eq!(execution["handoffFrom"], "ollama");
+        assert_eq!(execution["draftMessageId"], "draft-1");
+    }
+
+    #[test]
+    fn cancelled_handoff_cleanup_removes_the_request_registration() {
+        let state = AppState {
+            db: Mutex::new(rusqlite::Connection::open_in_memory().expect("database should open")),
+            cancellers: Mutex::new(HashMap::new()),
+        };
+        let (cancel_tx, _cancel_rx) = oneshot::channel();
+        state
+            .cancellers
+            .lock()
+            .expect("canceller lock")
+            .insert("request-1".into(), cancel_tx);
+
+        remove_request(&state, "request-1");
+
+        assert!(!state
+            .cancellers
+            .lock()
+            .expect("canceller lock")
+            .contains_key("request-1"));
     }
 }
