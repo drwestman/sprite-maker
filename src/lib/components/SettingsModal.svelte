@@ -1,13 +1,15 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { X, Settings, Bot, Image, Palette, CheckCircle2, CircleSlash2, RefreshCw, Plus, Trash2, PlugZap, ShieldCheck, Terminal, ArrowRight } from "lucide-svelte";
-  import type { ImageProviderInput, ProviderConnectionTest, ProviderStatus } from "$lib/types";
+  import { api } from "$lib/api";
+  import type { ImageProviderInput, OllamaModel, OllamaSettings, OllamaSettingsInput, ProviderConnectionTest, ProviderStatus } from "$lib/types";
   import StylePicker from "$lib/components/StylePicker.svelte";
   import type { StylePresetId } from "$lib/style-presets";
   import type { CustomArtStyle } from "$lib/library-types";
 
-  let { providers, defaultProvider, theme, workspaceStyle, customStyles = [], onDefaultProvider, onTheme, onWorkspaceStyle, onRefresh, onSaveImageProvider, onDeleteImageProvider, onTestImageProvider, onClose }: {
-    providers: ProviderStatus[]; defaultProvider: string; theme: string; workspaceStyle: StylePresetId; customStyles?: CustomArtStyle[];
-    onDefaultProvider: (provider: string) => void | Promise<void>; onTheme: (theme: string) => void; onWorkspaceStyle: (style: StylePresetId) => void | Promise<void>;
+  let { providers, defaultProvider, generationProvider, theme, workspaceStyle, customStyles = [], onDefaultProvider, onGenerationProvider, onTheme, onWorkspaceStyle, onRefresh, onSaveImageProvider, onDeleteImageProvider, onTestImageProvider, onClose }: {
+    providers: ProviderStatus[]; defaultProvider: string; generationProvider: string; theme: string; workspaceStyle: StylePresetId; customStyles?: CustomArtStyle[];
+    onDefaultProvider: (provider: string) => void | Promise<void>; onGenerationProvider: (provider: string) => void | Promise<void>; onTheme: (theme: string) => void; onWorkspaceStyle: (style: StylePresetId) => void | Promise<void>;
     onRefresh: () => void | Promise<void>; onSaveImageProvider: (input: ImageProviderInput) => Promise<void>; onDeleteImageProvider: (id: string) => Promise<void>;
     onTestImageProvider: (input: ImageProviderInput) => Promise<ProviderConnectionTest>; onClose: () => void;
   } = $props();
@@ -18,11 +20,17 @@
   let testingProvider = $state(false);
   let testResult = $state<{ kind: "success" | "error"; detail: string }>();
   let refreshing = $state(false);
+  let ollamaSettings = $state<OllamaSettings>({ baseUrl: "http://127.0.0.1:11434", model: "", hasToken: false });
+  let ollamaDraft = $state<OllamaSettingsInput>({ baseUrl: "http://127.0.0.1:11434", model: "", bearerToken: "" });
+  let ollamaModels = $state<OllamaModel[]>([]);
+  let ollamaBusy = $state(false);
+  let ollamaTesting = $state(false);
+  let ollamaResult = $state<{ kind: "success" | "error"; detail: string }>();
   const sections = [{ id: "providers", name: "Providers", icon: Bot }, { id: "image-providers", name: "Image generation", icon: Image }, { id: "generation", name: "Project art", icon: Palette }, { id: "appearance", name: "Appearance", icon: Settings }, { id: "general", name: "General", icon: ShieldCheck }];
   const agents = $derived(providers.filter((item) => item.kind === "agent"));
   const customProviders = $derived(providers.filter((item) => item.kind === "image" && item.configurable && item.id !== "midjourney"));
 
-  function statusLabel(status: string) { return ({ ready: "Ready", detected: "Detected", needs_auth: "Sign in required", not_installed: "Not installed", needs_codex: "Needs Codex", unsupported: "Authorized gateway only", unavailable: "Needs setup" } as Record<string, string>)[status] ?? "Unavailable"; }
+  function statusLabel(status: string) { return ({ ready: "Ready", detected: "Detected", needs_auth: "Sign in required", not_installed: "Not installed", needs_codex: "Needs Codex", unsupported: "Authorized gateway only", needs_setup: "Needs setup", offline: "Offline", unavailable: "Needs setup" } as Record<string, string>)[status] ?? "Unavailable"; }
   function editProvider(provider?: ProviderStatus, preset?: "grok" | "gemini" | "midjourney") {
     testResult = undefined;
     if (provider) editingProvider = { id: provider.id, name: provider.name, providerType: provider.id === "grok-image" ? "grok" : "openai-compatible", baseUrl: provider.baseUrl ?? "", apiKey: "", model: provider.model ?? "" };
@@ -36,6 +44,44 @@
   async function saveProvider() { if (!editingProvider) return; savingProvider = true; testResult = undefined; try { await onSaveImageProvider(editingProvider); editingProvider = undefined; } finally { savingProvider = false; } }
   async function testProvider() { if (!editingProvider) return; testingProvider = true; testResult = undefined; try { const result = await onTestImageProvider(editingProvider); testResult = { kind: "success", detail: result.detail }; } catch (error) { testResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) }; } finally { testingProvider = false; } }
   async function removeProvider(id: string) { await onDeleteImageProvider(id); if (editingProvider?.id === id) editingProvider = undefined; }
+  async function loadOllama() {
+    try {
+      const settings = await api.getOllamaSettings();
+      ollamaSettings = settings;
+      ollamaDraft = { baseUrl: settings.baseUrl, model: settings.model ?? "", bearerToken: "" };
+      ollamaModels = await api.refreshOllamaModels();
+      ollamaResult = undefined;
+    } catch (error) {
+      ollamaResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  async function refreshOllama() {
+    ollamaBusy = true;
+    ollamaResult = undefined;
+    try { ollamaModels = await api.refreshOllamaModels(); }
+    catch (error) { ollamaResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) }; }
+    finally { ollamaBusy = false; }
+  }
+  async function saveOllama() {
+    ollamaBusy = true;
+    ollamaResult = undefined;
+    try {
+      ollamaSettings = await api.saveOllamaSettings(ollamaDraft);
+      ollamaDraft = { ...ollamaDraft, baseUrl: ollamaSettings.baseUrl, model: ollamaSettings.model ?? "", bearerToken: "" };
+      ollamaModels = await api.refreshOllamaModels();
+      await onRefresh();
+      ollamaResult = { kind: "success", detail: "Ollama settings saved." };
+    } catch (error) { ollamaResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) }; }
+    finally { ollamaBusy = false; }
+  }
+  async function testOllama() {
+    ollamaTesting = true;
+    ollamaResult = undefined;
+    try { const result = await api.testOllamaConnection(ollamaDraft); ollamaResult = { kind: "success", detail: result.detail }; }
+    catch (error) { ollamaResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) }; }
+    finally { ollamaTesting = false; }
+  }
+  onMount(() => { void loadOllama(); });
 </script>
 
 <div class="backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && onClose()}>
@@ -48,6 +94,8 @@
           <div class="heading"><div><span class="eyebrow">AI runtime</span><h2>Providers</h2><p>Choose the CLI used for new chats. Existing chats keep their original provider.</p></div><button class="secondary" disabled={refreshing} onclick={refresh}><RefreshCw size={13} class={refreshing ? "spin" : ""}/>{refreshing ? "Detecting…" : "Detect again"}</button></div>
           <div class="section-label"><Terminal size={13}/><span>Agent CLIs</span></div>
           <div class="provider-grid">{#each agents as provider}<article class:chosen={defaultProvider === provider.id}><div class="provider-top"><div class="provider-icon"><Bot size={18}/></div><span class:ready={provider.status === "ready"} class:detected={provider.status === "detected"}>{#if provider.status === "ready"}<CheckCircle2 size={12}/>{:else}<CircleSlash2 size={12}/>{/if}{statusLabel(provider.status)}</span></div><h3>{provider.name}</h3><p>{provider.detail}</p>{#if provider.modes.length}<small>{provider.modes.length} model{provider.modes.length === 1 ? "" : "s"} reported by CLI</small>{/if}{#if provider.executable}<code title={provider.executable}>{provider.executable}</code>{/if}<button class="choose" disabled={!(["ready", "detected"].includes(provider.status)) || defaultProvider === provider.id} onclick={() => onDefaultProvider(provider.id)}>{defaultProvider === provider.id ? "Default for new chats" : "Use for new chats"}</button></article>{/each}</div>
+          <div class="handoff-card"><div><strong>Generation handoff</strong><p>Ollama plans slash-command requests, then this provider performs workspace and file actions.</p></div><select value={generationProvider} onchange={(event) => onGenerationProvider(event.currentTarget.value)}>{#each agents.filter(item => item.id !== "ollama") as provider}<option value={provider.id}>{provider.name}</option>{/each}</select></div>
+          <div class="ollama-card"><div class="heading-inline"><div><strong>Ollama endpoint and model</strong><p>Use an existing local or remote Ollama tag. Sprite Studio never creates, pulls, or changes models.</p></div><button class="secondary" disabled={ollamaBusy || ollamaTesting} onclick={refreshOllama}><RefreshCw size={13} class={ollamaBusy ? "spin" : ""}/>{ollamaBusy ? "Refreshing…" : "Refresh models"}</button></div><div class="form-grid"><label class="wide">Base URL<input bind:value={ollamaDraft.baseUrl} placeholder="http://127.0.0.1:11434" inputmode="url" autocomplete="url"/><small>Local HTTP is allowed; remote endpoints must use HTTPS.</small></label><label>Model tag<select bind:value={ollamaDraft.model}><option value="">Choose an installed model</option>{#each ollamaModels as model}<option value={model.model}>{model.name}{model.vision ? " · vision" : ""}</option>{/each}</select><small>Tags are discovered from /api/tags. You may enter a custom tag below.</small></label><label>Custom model tag<input bind:value={ollamaDraft.model} placeholder="llama3.2:latest" autocomplete="off"/></label><label class="wide">Bearer token<input type="password" bind:value={ollamaDraft.bearerToken} placeholder={ollamaSettings.hasToken ? "Saved — leave blank to keep it" : "Optional for remote endpoints"} autocomplete="new-password"/><small>Stored locally and never included in error messages.</small></label></div>{#if ollamaResult}<div class="test-result" class:success={ollamaResult.kind === "success"} class:error={ollamaResult.kind === "error"}>{ollamaResult.detail}</div>{/if}<footer class="ollama-footer"><span>{ollamaModels.length ? `${ollamaModels.length} installed model${ollamaModels.length === 1 ? "" : "s"} found` : "No model list loaded"}</span><div><button class="secondary" disabled={ollamaTesting || ollamaBusy} onclick={testOllama}><PlugZap size={13}/>{ollamaTesting ? "Testing…" : "Test connection"}</button><button class="primary" disabled={ollamaTesting || ollamaBusy} onclick={saveOllama}>{ollamaBusy ? "Saving…" : "Save Ollama settings"}</button></div></footer></div>
         {:else if section === "image-providers"}
           <div class="heading"><div><span class="eyebrow">Bring your own image model</span><h2>Image generation</h2><p>Pair any chat provider with Codex ImageGen, Grok Image, Gemini Image, or an authorized compatible endpoint.</p></div><button class="secondary" onclick={() => editProvider()}><Plus size={13}/>Custom image API</button></div>
           <div class="image-provider-cards">
@@ -86,4 +134,5 @@
   .custom-layout{display:grid;grid-template-columns:235px minmax(0,1fr);min-height:435px;margin-top:18px;border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--sidebar)}.saved-list{padding:9px;border-right:1px solid var(--border);background:#090b09}.saved-provider{width:100%;display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:9px;padding:9px;border:0;border-radius:7px;background:transparent;color:var(--text);text-align:left;cursor:pointer}.saved-provider:hover,.saved-provider.active{background:var(--selected)}.saved-provider .provider-icon{width:32px;height:32px}.saved-provider strong,.saved-provider small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.saved-provider strong{font-size:10px}.saved-provider small{margin-top:4px;font-size:9px;color:var(--faint)}.saved-provider i{font-size:8px;font-style:normal;color:var(--faint)}.saved-provider i.ready{color:#8eb57a}.empty{padding:28px 12px;text-align:center;color:var(--faint)}.empty strong{display:block;margin-top:10px;font-size:11px;color:var(--muted)}.empty p{font-size:9px;line-height:1.5}.gateway-note{margin:16px 4px 4px;padding:11px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.gateway-note strong{font-size:10px}.gateway-note p{margin:5px 0 9px;font-size:9px;line-height:1.5;color:var(--faint)}
   .provider-form{padding:25px 27px}.form-heading{display:flex;align-items:flex-start;justify-content:space-between}.form-heading h3{font-size:17px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px 12px;margin-top:22px}.form-grid label{font-size:10px;color:var(--muted)}.form-grid label.wide{grid-column:1/-1}.form-grid input,.form-grid select{width:100%;height:36px;display:block;margin-top:6px;padding:0 10px;border:1px solid var(--border-strong);border-radius:7px;outline:0;background:var(--bg);color:var(--text);font:inherit;font-size:11px}.form-grid input:focus,.form-grid select:focus{border-color:var(--accent);box-shadow:0 0 0 3px #a7b66612}.form-grid input:disabled{opacity:.6}.form-grid small{display:block;margin-top:5px;font-size:8px;line-height:1.4;color:var(--faint)}.provider-form footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}.provider-form footer>div{display:flex;gap:7px;margin-left:auto}.danger{height:32px;display:flex;align-items:center;gap:6px;padding:0 9px;border:1px solid #6f4141;border-radius:7px;background:transparent;color:#cf7a75;font:inherit;font-size:10px;cursor:pointer}.test-result{margin-top:13px;padding:9px 10px;border:1px solid var(--border);border-radius:6px;font-size:10px;line-height:1.45;color:var(--muted)}.test-result.success{border-color:#597551;color:#91b785;background:#7193660d}.test-result.error{border-color:#754848;color:#d88a84;background:#9a55550d}.form-placeholder{display:grid;place-content:center;justify-items:center;padding:40px;color:var(--faint);text-align:center}.form-placeholder strong{margin-top:12px;font-size:12px;color:var(--muted)}.form-placeholder p{max-width:300px;margin:7px 0;font-size:10px;line-height:1.5}
   .note{margin-top:22px;padding:16px;border:1px solid var(--border);border-radius:9px;background:var(--surface)}.note strong,.setting-row strong{font-size:12px}.note p{margin:6px 0 0;font-size:11px;line-height:1.55;color:var(--muted)}.setting-row{height:70px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}.setting-row strong,.setting-row small{display:block}.setting-row small{margin-top:4px;font-size:10px;color:var(--faint)}.setting-row select{height:32px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:inherit;font-size:11px}@media(max-width:820px){.modal{width:calc(100vw - 24px);height:calc(100vh - 24px)}.layout{grid-template-columns:170px minmax(0,1fr)}main{padding:28px 24px}.provider-grid,.image-provider-cards{grid-template-columns:1fr}.custom-layout{grid-template-columns:1fr}.saved-list{border-right:0;border-bottom:1px solid var(--border)}.provider-grid p{min-height:0}}
+  .handoff-card,.ollama-card{margin-top:15px;padding:15px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}.handoff-card{display:flex;align-items:center;justify-content:space-between;gap:16px}.handoff-card strong,.ollama-card strong{font-size:12px}.handoff-card p,.ollama-card p{margin:5px 0 0;font-size:10px;line-height:1.45;color:var(--muted)}.handoff-card select{height:32px;min-width:170px;padding:0 8px;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg);color:var(--text);font:inherit;font-size:10px}.heading-inline{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.ollama-card .form-grid{margin-top:16px}.ollama-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;padding-top:13px;border-top:1px solid var(--border);font-size:9px;color:var(--faint)}.ollama-footer>div{display:flex;gap:7px}
 </style>

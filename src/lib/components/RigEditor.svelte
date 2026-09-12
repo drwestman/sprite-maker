@@ -43,7 +43,7 @@
   let fitBusy = $state(false);
 
   const masterAsset = $derived(assets.find(asset => asset.id === masterAssetId));
-  const agentProviders = $derived(providers.filter(provider => provider.kind === "agent" && ["ready", "detected"].includes(provider.status)));
+  const agentProviders = $derived(providers.filter(provider => provider.kind === "agent" && ["ready", "detected"].includes(provider.status) && (provider.id !== "ollama" || (provider.capabilities.imageInput && provider.capabilities.structuredOutput))));
   const selectedPoint = $derived(points.find(point => point.id === selectedPointId));
   const selectedFrame = $derived(frames[frameIndex]);
   const showingPreview = $derived(previewPaths.length > 0 && previewIndex < previewPaths.length);

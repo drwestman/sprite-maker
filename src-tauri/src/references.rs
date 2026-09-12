@@ -442,7 +442,7 @@ pub fn list_conversation_reference_ids(
 }
 
 pub fn prompt_context(
-    state: &State<'_, AppState>,
+    state: &AppState,
     conversation_id: &str,
     reference_ids: &[String],
     maximum: usize,

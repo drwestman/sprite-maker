@@ -1,5 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import type { Animation, AnimationInput, AnimationTemplate, Asset, AssetPack, AssetVersion, BackgroundJob, Conversation, ExportResult, FrameOptimizationResult, GenerationManifest, ImageProviderInput, Message, MotionPlan, ProceduralVfxInput, ProjectBackup, ProviderConnectionTest, ProviderRequestOptions, ProviderStatus, QualityReport, ReferenceCategory, ReferenceImage, RigFitReport, RigInput, RigRenderResult, RigSuggestion, Rig, SidebarSnapshot, SpriteSheet, SpriteSheetInput, TemplateApplication, TerrainExportInput, TerrainExportResult, VfxEffect, Workspace, Worktree, WorktreeKind } from "$lib/types";
+import type { Animation, AnimationInput, AnimationTemplate, Asset, AssetPack, AssetVersion, BackgroundJob, Conversation, ExportResult, FrameOptimizationResult, GenerationManifest, ImageProviderInput, Message, MotionPlan, OllamaModel, OllamaSettings, OllamaSettingsInput, ProceduralVfxInput, ProjectBackup, ProviderConnectionTest, ProviderRequestOptions, ProviderStatus, QualityReport, ReferenceCategory, ReferenceImage, RigFitReport, RigInput, RigRenderResult, RigSuggestion, Rig, SidebarSnapshot, SpriteSheet, SpriteSheetInput, TemplateApplication, TerrainExportInput, TerrainExportResult, VfxEffect, Workspace, Worktree, WorktreeKind } from "$lib/types";
 
 export const api = {
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
@@ -30,6 +30,11 @@ export const api = {
   listMessages: (conversationId: string) => invoke<Message[]>("list_messages", { conversationId }),
   updateMessageMetadata: (id: string, metadata: Record<string, unknown>) => invoke<void>("update_message_metadata", { id, metadata }),
   detectProviders: () => invoke<ProviderStatus[]>("detect_providers"),
+  getOllamaSettings: () => invoke<OllamaSettings>("get_ollama_settings"),
+  saveOllamaSettings: (input: OllamaSettingsInput) => invoke<OllamaSettings>("save_ollama_settings", { input }),
+  refreshOllamaModels: () => invoke<OllamaModel[]>("refresh_ollama_models"),
+  testOllamaConnection: (input?: OllamaSettingsInput) => invoke<ProviderConnectionTest>("test_ollama_connection", { input: input ?? null }),
+  setGenerationProvider: (provider: string) => invoke<void>("set_generation_provider", { provider }),
   saveImageProvider: (input: ImageProviderInput) => invoke<ProviderStatus>("save_image_provider", { input }),
   deleteImageProvider: (id: string) => invoke<void>("delete_image_provider", { id }),
   testImageProvider: (input: ImageProviderInput) => invoke<ProviderConnectionTest>("test_image_provider", { input }),

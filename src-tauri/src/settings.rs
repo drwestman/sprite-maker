@@ -6,6 +6,8 @@ use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use tauri::State;
 
+const EXECUTION_PROVIDERS: &[&str] = &["codex", "claude", "gemini", "grok"];
+
 #[tauri::command]
 pub fn get_setting(key: String, state: State<'_, AppState>) -> CommandResult<serde_json::Value> {
     let connection = state
@@ -49,4 +51,23 @@ pub fn set_setting(
         params![key, value.to_string(), Utc::now().to_rfc3339()],
     )?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_generation_provider(
+    provider: String,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    let provider = provider.trim().to_ascii_lowercase();
+    if !EXECUTION_PROVIDERS.contains(&provider.as_str()) {
+        return Err(CommandError::new(
+            "generation_provider_unsupported",
+            "Choose a non-Ollama provider that can execute workspace actions",
+        ));
+    }
+    set_setting(
+        "generation-provider".into(),
+        serde_json::Value::String(provider),
+        state,
+    )
 }

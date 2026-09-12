@@ -1472,6 +1472,12 @@ pub fn parse_rig_suggestion_text(text: &str, width: u32, height: u32) -> Option<
             }
         }
     }
+    let plain = text.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(plain) {
+        if let Some(suggestion) = normalize_suggestion(value, width, height, "ai") {
+            return Some(suggestion);
+        }
+    }
     None
 }
 
@@ -2380,7 +2386,37 @@ pub async fn ai_suggest_rig_points(
         master.height(),
     );
     let mut image_paths: Vec<String> = Vec::new();
-    if provider == "codex" {
+    if provider == "ollama" {
+        let (_, model) = crate::ollama::selected_model(&state, input.model.as_deref()).await?;
+        if !model.vision || !model.structured_output {
+            return Err(CommandError::new(
+                "ollama_rig_unsupported",
+                format!(
+                    "Ollama model `{}` must support vision and structured output for AI rig suggestions",
+                    model.model
+                ),
+            ));
+        }
+        let encoded = crate::ollama_transport::encode_image(Path::new(&asset.path))
+            .map_err(|error| CommandError::new("ollama_reference_error", error.to_string()))?;
+        let mut message = crate::ollama_transport::OllamaChatMessage::text("user", &prompt);
+        message.images = Some(vec![encoded]);
+        let response = crate::ollama::complete_text_request(
+            &state,
+            &model,
+            vec![message],
+            crate::ollama::structured_format(),
+        )
+        .await?;
+        return parse_rig_suggestion_text(&response, master.width(), master.height()).ok_or_else(
+            || {
+                CommandError::new(
+                    "rig_suggestion_missing",
+                    "The provider returned JSON without usable rig points. Retry with a clearer sprite silhouette.",
+                )
+            },
+        );
+    } else if provider == "codex" {
         image_paths.push(asset.path.clone());
     } else {
         // Non-Codex CLIs read images from the workspace by path.

@@ -163,7 +163,10 @@ pub fn switch_conversation_provider(
     provider: String,
     state: State<'_, AppState>,
 ) -> CommandResult<Conversation> {
-    if !matches!(provider.as_str(), "codex" | "claude" | "gemini" | "grok") {
+    if !matches!(
+        provider.as_str(),
+        "codex" | "claude" | "gemini" | "grok" | "ollama"
+    ) {
         return Err(CommandError::new(
             "provider_unsupported",
             "Choose one of the installed chat providers",
@@ -272,14 +275,21 @@ pub fn list_messages(
     Ok(rows.filter_map(Result::ok).collect())
 }
 
-pub fn add_message(
+pub fn add_message_with_metadata(
     state: &AppState,
     conversation_id: &str,
     role: &str,
     kind: &str,
     content: &str,
     status: &str,
+    metadata: serde_json::Value,
 ) -> CommandResult<Message> {
+    if !metadata.is_object() {
+        return Err(CommandError::new(
+            "invalid_metadata",
+            "Message metadata must be a JSON object",
+        ));
+    }
     let message = Message {
         id: Uuid::new_v4().to_string(),
         conversation_id: conversation_id.to_string(),
@@ -287,7 +297,7 @@ pub fn add_message(
         kind: kind.to_string(),
         content: content.to_string(),
         status: status.to_string(),
-        metadata: serde_json::json!({}),
+        metadata,
         created_at: Utc::now().to_rfc3339(),
     };
     let connection = state

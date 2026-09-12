@@ -290,7 +290,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationOptions {
     pub quality: String,
@@ -371,6 +371,10 @@ pub struct ProviderEvent {
     pub conversation_id: String,
     pub event_type: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

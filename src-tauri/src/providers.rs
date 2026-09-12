@@ -1,11 +1,16 @@
 use crate::{
-    conversations::{add_message, get_conversation, set_provider_session, update_message},
+    conversations::{
+        add_message_with_metadata, get_conversation, set_provider_session,
+        update_message,
+    },
     error::{CommandError, CommandResult},
     models::{
-        GenerationOptions, ImageProviderInput, ProviderCapabilities, ProviderConnectionTest,
-        ProviderEvent, ProviderMode, ProviderRequestOptions, ProviderStatus,
+        Conversation, GenerationOptions, ImageProviderInput, ProviderCapabilities,
+        ProviderConnectionTest, ProviderEvent, ProviderMode, ProviderRequestOptions,
+        ProviderStatus,
     },
     references,
+    ollama,
     sprite_harness::studio_prompt,
     workspace::workspace_path,
     AppState,
@@ -30,6 +35,34 @@ use tokio::{
     sync::oneshot,
 };
 use uuid::Uuid;
+
+fn is_generation_command(command: Option<&str>) -> bool {
+    matches!(command, Some("animate" | "sprite" | "character" | "effect" | "pack"))
+}
+
+fn configured_generation_provider(state: &AppState) -> CommandResult<String> {
+    let connection = state
+        .db
+        .lock()
+        .map_err(|_| CommandError::new("database_locked", "Database lock was poisoned"))?;
+    let value: Option<String> = connection
+        .query_row(
+            "SELECT value_json FROM settings WHERE key='generation-provider'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let provider = value
+        .and_then(|json| serde_json::from_str::<String>(&json).ok())
+        .unwrap_or_else(|| "codex".into());
+    if !matches!(provider.as_str(), "codex" | "claude" | "gemini" | "grok") {
+        return Err(CommandError::new(
+            "generation_provider_unsupported",
+            "Choose a non-Ollama provider that can execute workspace actions",
+        ));
+    }
+    Ok(provider)
+}
 
 pub(crate) fn find_executable(name: &str) -> Option<PathBuf> {
     let search_path = current_provider_environment_path();
@@ -654,7 +687,7 @@ pub fn delete_image_provider(id: String, state: State<'_, AppState>) -> CommandR
 }
 
 #[tauri::command]
-pub fn detect_providers(state: State<'_, AppState>) -> Vec<ProviderStatus> {
+pub async fn detect_providers(state: State<'_, AppState>) -> CommandResult<Vec<ProviderStatus>> {
     let mut providers: Vec<ProviderStatus> = [
         ("codex", "Codex CLI"),
         ("claude", "Claude Code"),
@@ -741,6 +774,7 @@ pub fn detect_providers(state: State<'_, AppState>) -> Vec<ProviderStatus> {
         }
     })
     .collect();
+    providers.push(ollama::detect_status(&state).await);
     providers.push(ProviderStatus {
         id: "imagegen".into(),
         name: "OpenAI ImageGen".into(),
@@ -796,7 +830,7 @@ pub fn detect_providers(state: State<'_, AppState>) -> Vec<ProviderStatus> {
         base_url: None,
         model: None,
     });
-    providers
+    Ok(providers)
 }
 
 fn provider_capabilities(id: &str) -> ProviderCapabilities {
@@ -847,6 +881,18 @@ fn emit(
     event_type: &str,
     content: impl Into<String>,
 ) {
+    emit_with_metadata(app, request_id, conversation_id, event_type, content, None, None);
+}
+
+fn emit_with_metadata(
+    app: &AppHandle,
+    request_id: &str,
+    conversation_id: &str,
+    event_type: &str,
+    content: impl Into<String>,
+    provider: Option<&str>,
+    handoff_provider: Option<&str>,
+) {
     let _ = app.emit(
         "provider-event",
         ProviderEvent {
@@ -854,6 +900,8 @@ fn emit(
             conversation_id: conversation_id.to_string(),
             event_type: event_type.to_string(),
             content: content.into(),
+            provider: provider.map(str::to_string),
+            handoff_provider: handoff_provider.map(str::to_string),
         },
     );
 }
@@ -936,6 +984,7 @@ fn provider_display_name(id: &str) -> &'static str {
         "claude" => "Claude Code",
         "gemini" => "Gemini CLI",
         "grok" => "Grok CLI",
+        "ollama" => "Ollama",
         _ => "Provider CLI",
     }
 }
@@ -946,6 +995,7 @@ fn provider_auth_help(id: &str) -> String {
         "claude" => "Claude Code is installed but not authenticated. Run `claude auth login`, then retry.".into(),
         "gemini" => "Gemini CLI could not authenticate the headless request. Run `gemini` and complete its supported sign-in flow, then retry.".into(),
         "grok" => "Grok CLI is installed but not authenticated. Run `grok login`, then retry.".into(),
+        "ollama" => "Ollama is not reachable or has no selected model. Start Ollama and choose an installed model tag, then retry.".into(),
         _ => "The provider is not authenticated.".into(),
     }
 }
@@ -1095,7 +1145,7 @@ fn response_reports_generation_failure(response: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn start_provider_message(
+pub async fn start_provider_message(
     conversation_id: String,
     prompt: String,
     context: Option<String>,
@@ -1113,7 +1163,7 @@ pub fn start_provider_message(
     let conversation = get_conversation(&state, &conversation_id)?;
     if !matches!(
         conversation.provider.as_str(),
-        "codex" | "claude" | "gemini" | "grok"
+        "codex" | "claude" | "gemini" | "grok" | "ollama"
     ) {
         return Err(CommandError::new(
             "provider_unsupported",
@@ -1121,6 +1171,19 @@ pub fn start_provider_message(
         ));
     }
     let provider_id = conversation.provider.clone();
+    let options = options.unwrap_or_default();
+    validate_provider_options(&options)?;
+    if provider_id == "ollama" {
+        return start_ollama_message(
+            conversation,
+            prompt,
+            context,
+            options,
+            app,
+            &state,
+        )
+        .await;
+    }
     let executable = find_executable(&provider_id).ok_or_else(|| {
         CommandError::new(
             "provider_unavailable",
@@ -1136,8 +1199,6 @@ pub fn start_provider_message(
             provider_auth_help(&provider_id),
         ));
     }
-    let options = options.unwrap_or_default();
-    validate_provider_options(&options)?;
     let capabilities = provider_capabilities(&provider_id);
     if !options.reference_ids.is_empty() && !capabilities.image_input {
         return Err(CommandError::new(
@@ -1180,15 +1241,24 @@ pub fn start_provider_message(
         ));
     }
     workspace_path(&state, &conversation.workspace_id)?;
-    add_message(
+    add_message_with_metadata(
         &state,
         &conversation_id,
         "user",
         "text",
         &prompt,
         "completed",
+        serde_json::json!({"provider": provider_id}),
     )?;
-    let assistant = add_message(&state, &conversation_id, "assistant", "text", "", "running")?;
+    let assistant = add_message_with_metadata(
+        &state,
+        &conversation_id,
+        "assistant",
+        "text",
+        "",
+        "running",
+        serde_json::json!({"provider": provider_id}),
+    )?;
     let request_id = Uuid::new_v4().to_string();
     let (cancel_tx, cancel_rx) = oneshot::channel();
     state
@@ -1226,6 +1296,570 @@ pub fn start_provider_message(
         run_provider(task_app, run, cancel_rx).await;
     });
     Ok(request_id)
+}
+
+async fn start_ollama_message(
+    conversation: Conversation,
+    prompt: String,
+    context: Option<String>,
+    options: ProviderRequestOptions,
+    app: AppHandle,
+    state: &AppState,
+) -> CommandResult<String> {
+    let (client, model) = ollama::selected_model(state, options.model.as_deref()).await?;
+    let capabilities = ollama::model_capabilities(&model);
+    if !options.reference_ids.is_empty() && !capabilities.image_input {
+        return Err(CommandError::new(
+            "ollama_vision_required",
+            format!(
+                "Ollama model `{}` does not support vision; choose a model with the vision capability before attaching references",
+                model.model
+            ),
+        ));
+    }
+    let (reference_context, reference_paths) = references::prompt_context(
+        state,
+        &conversation.id,
+        &options.reference_ids,
+        capabilities.maximum_reference_images as usize,
+    )?;
+    let combined_context = [context.as_deref().unwrap_or(""), reference_context.as_str()]
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let fallback_provider = if is_generation_command(options.command.as_deref()) {
+        Some(configured_generation_provider(state)?)
+    } else {
+        None
+    };
+    let (fallback_executable, fallback_error) = fallback_provider
+        .as_deref()
+        .map(|provider| {
+            let Some(executable) = find_executable(provider) else {
+                return (
+                    None,
+                    Some(format!(
+                        "The configured generation provider {} is unavailable. Install and authenticate it before executing this draft.",
+                        provider_display_name(provider)
+                    )),
+                );
+            };
+            if provider != "gemini" && !provider_is_authenticated(provider, &executable) {
+                return (None, Some(provider_auth_help(provider)));
+            }
+            (Some(executable), None)
+        })
+        .unwrap_or((None, None));
+
+    let image_provider_id = options.image_provider_id.as_deref().unwrap_or("imagegen");
+    if image_provider_id == "midjourney" {
+        return Err(CommandError::new(
+            "provider_unsupported",
+            "Midjourney does not provide a public API for this integration",
+        ));
+    }
+    let fallback_id = fallback_provider.as_deref().unwrap_or("ollama");
+    let provider_native_image = image_provider_id == "provider-native"
+        || (image_provider_id == "imagegen" && fallback_id != "codex");
+    let image_provider = if provider_native_image {
+        None
+    } else {
+        load_image_provider(state, image_provider_id)?
+    };
+    if fallback_provider.is_some()
+        && !provider_native_image
+        && image_provider_id != "imagegen"
+        && image_provider.is_none()
+    {
+        return Err(CommandError::new(
+            "provider_unavailable",
+            "Configure the selected image provider in Settings before generating",
+        ));
+    }
+    workspace_path(state, &conversation.workspace_id)?;
+
+    add_message_with_metadata(
+        state,
+        &conversation.id,
+        "user",
+        "text",
+        &prompt,
+        "completed",
+        serde_json::json!({"provider": "ollama"}),
+    )?;
+    let assistant = if fallback_provider.is_none() {
+        Some(add_message_with_metadata(
+            state,
+            &conversation.id,
+            "assistant",
+            "text",
+            "",
+            "running",
+            serde_json::json!({"provider": "ollama"}),
+        )?)
+    } else {
+        None
+    };
+    let request_id = Uuid::new_v4().to_string();
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    state
+        .cancellers
+        .lock()
+        .map_err(|_| {
+            CommandError::new("process_error", "Provider process registry is unavailable")
+        })?
+        .insert(request_id.clone(), cancel_tx);
+    let run = OllamaRun {
+        request_id: request_id.clone(),
+        conversation_id: conversation.id,
+        workspace_id: conversation.workspace_id,
+        assistant_id: assistant.map(|message| message.id),
+        prompt,
+        combined_context,
+        command: options.command,
+        generation: options.generation,
+        reference_paths,
+        client,
+        model,
+        fallback_provider,
+        fallback_executable,
+        fallback_error,
+        image_provider,
+    };
+    tauri::async_runtime::spawn(async move {
+        run_ollama(app, run, cancel_rx).await;
+    });
+    Ok(request_id)
+}
+
+struct OllamaRun {
+    request_id: String,
+    conversation_id: String,
+    workspace_id: String,
+    assistant_id: Option<String>,
+    prompt: String,
+    combined_context: String,
+    command: Option<String>,
+    generation: Option<GenerationOptions>,
+    reference_paths: Vec<String>,
+    client: crate::ollama_transport::OllamaClient,
+    model: ollama::OllamaModel,
+    fallback_provider: Option<String>,
+    fallback_executable: Option<PathBuf>,
+    fallback_error: Option<String>,
+    image_provider: Option<StoredImageProvider>,
+}
+
+async fn run_ollama(
+    app: AppHandle,
+    run: OllamaRun,
+    mut cancel_rx: oneshot::Receiver<()>,
+) {
+    let OllamaRun {
+        request_id,
+        conversation_id,
+        workspace_id,
+        assistant_id,
+        prompt,
+        combined_context,
+        command,
+        generation,
+        reference_paths,
+        client,
+        model,
+        fallback_provider,
+        fallback_executable,
+        fallback_error,
+        image_provider,
+    } = run;
+    let state = app.state::<AppState>();
+    emit_with_metadata(
+        &app,
+        &request_id,
+        &conversation_id,
+        "started",
+        "Ollama is working on this request",
+        Some("ollama"),
+        fallback_provider.as_deref(),
+    );
+    if let Err(error) = workspace_path(&state, &workspace_id) {
+        finish_ollama_failure(
+            &app,
+            &state,
+            &request_id,
+            &conversation_id,
+            assistant_id.as_deref(),
+            error.message,
+            fallback_provider.as_deref(),
+        );
+        return;
+    }
+    let mut messages = match ollama::load_history(&state, &conversation_id) {
+        Ok(value) => value,
+        Err(error) => {
+            finish_ollama_failure(
+                &app,
+                &state,
+                &request_id,
+                &conversation_id,
+                assistant_id.as_deref(),
+                error.message,
+                fallback_provider.as_deref(),
+            );
+            return;
+        }
+    };
+    let is_handoff = fallback_provider.is_some();
+    let user_content = if is_handoff {
+        ollama::draft_prompt(
+            &prompt,
+            &combined_context,
+            command.as_deref().unwrap_or("generation"),
+            generation.as_ref(),
+        )
+    } else if command.as_deref() == Some("rig") {
+        studio_prompt(
+            &prompt,
+            (!combined_context.is_empty()).then_some(combined_context.as_str()),
+            generation.as_ref(),
+            command.as_deref(),
+        )
+    } else {
+        [prompt.as_str(), combined_context.as_str()]
+            .into_iter()
+            .filter(|value| !value.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    if let Err(error) = ollama::set_latest_user_content(&mut messages, user_content) {
+        finish_ollama_failure(
+            &app,
+            &state,
+            &request_id,
+            &conversation_id,
+            assistant_id.as_deref(),
+            error.message,
+            fallback_provider.as_deref(),
+        );
+        return;
+    }
+    if let Err(error) = ollama::attach_images(&mut messages, &reference_paths) {
+        finish_ollama_failure(
+            &app,
+            &state,
+            &request_id,
+            &conversation_id,
+            assistant_id.as_deref(),
+            error.message,
+            fallback_provider.as_deref(),
+        );
+        return;
+    }
+    let format = (command.as_deref() == Some("rig") && model.structured_output)
+        .then(ollama::structured_format)
+        .flatten();
+    let request = ollama::request(&model, messages, format);
+    if is_handoff {
+        let draft = match client.complete_chat(&request, &mut cancel_rx).await {
+            Ok(value) => value.trim().to_string(),
+            Err(crate::ollama_transport::OllamaTransportError::Cancelled) => {
+                finish_ollama_cancelled(
+                    &app,
+                    &state,
+                    &request_id,
+                    &conversation_id,
+                    fallback_provider.as_deref(),
+                );
+                return;
+            }
+            Err(error) => {
+                finish_ollama_failure(
+                    &app,
+                    &state,
+                    &request_id,
+                    &conversation_id,
+                    None,
+                    ollama::transport_error(error).message,
+                    fallback_provider.as_deref(),
+                );
+                return;
+            }
+        };
+        if draft.is_empty() {
+            finish_ollama_failure(
+                &app,
+                &state,
+                &request_id,
+                &conversation_id,
+                None,
+                "Ollama returned an empty execution draft".into(),
+                fallback_provider.as_deref(),
+            );
+            return;
+        }
+        let fallback = fallback_provider
+            .as_deref()
+            .expect("handoff runs always have a fallback provider");
+        let draft_message = match add_message_with_metadata(
+            &state,
+            &conversation_id,
+            "assistant",
+            "prompt-draft",
+            &draft,
+            "completed",
+            serde_json::json!({
+                "provider": "ollama",
+                "handoffProvider": fallback,
+                "handoffStatus": "pending",
+                "command": command,
+            }),
+        ) {
+            Ok(message) => message,
+            Err(error) => {
+                finish_ollama_failure(
+                    &app,
+                    &state,
+                    &request_id,
+                    &conversation_id,
+                    None,
+                    error.message,
+                    Some(fallback),
+                );
+                return;
+            }
+        };
+        emit_with_metadata(
+            &app,
+            &request_id,
+            &conversation_id,
+            "draft",
+            draft.clone(),
+            Some("ollama"),
+            Some(fallback),
+        );
+        if cancel_rx.try_recv().is_ok() {
+            finish_ollama_cancelled(
+                &app,
+                &state,
+                &request_id,
+                &conversation_id,
+                Some(fallback),
+            );
+            return;
+        }
+        if let Some(error) = fallback_error {
+            finish_ollama_failure(
+                &app,
+                &state,
+                &request_id,
+                &conversation_id,
+                None,
+                error,
+                Some(fallback),
+            );
+            return;
+        }
+        let Some(executable) = fallback_executable else {
+            finish_ollama_failure(
+                &app,
+                &state,
+                &request_id,
+                &conversation_id,
+                None,
+                "The configured generation provider is unavailable".into(),
+                Some(fallback),
+            );
+            return;
+        };
+        let assistant = match add_message_with_metadata(
+            &state,
+            &conversation_id,
+            "assistant",
+            "text",
+            "",
+            "running",
+            serde_json::json!({
+                "provider": fallback,
+                "handoffFrom": "ollama",
+                "draftMessageId": draft_message.id,
+            }),
+        ) {
+            Ok(message) => message,
+            Err(error) => {
+                finish_ollama_failure(
+                    &app,
+                    &state,
+                    &request_id,
+                    &conversation_id,
+                    None,
+                    error.message,
+                    Some(fallback),
+                );
+                return;
+            }
+        };
+        let fallback_run = ProviderRun {
+            request_id,
+            conversation_id,
+            workspace_id,
+            session_id: None,
+            assistant_id: assistant.id,
+            prompt: studio_prompt(&draft, None, generation.as_ref(), command.as_deref()),
+            model: None,
+            reasoning_effort: None,
+            reference_paths,
+            executable,
+            image_provider,
+            image_prompt: draft,
+            provider_id: fallback.to_string(),
+        };
+        run_provider(app, fallback_run, cancel_rx).await;
+        return;
+    }
+
+    let Some(assistant_id) = assistant_id else {
+        finish_ollama_failure(
+            &app,
+            &state,
+            &request_id,
+            &conversation_id,
+            None,
+            "Ollama chat did not create an assistant message".into(),
+            None,
+        );
+        return;
+    };
+    let mut streamed_response = String::new();
+    let response = client
+        .stream_chat(&request, &mut cancel_rx, |delta| {
+            streamed_response.push_str(delta);
+            let _ = update_message(&state, &assistant_id, &streamed_response, "running");
+            emit_with_metadata(
+                &app,
+                &request_id,
+                &conversation_id,
+                "content",
+                delta,
+                Some("ollama"),
+                None,
+            );
+        })
+        .await;
+    match response {
+        Ok(response) => {
+            if command.as_deref() == Some("rig") {
+                if let Ok(conversation) = get_conversation(&state, &conversation_id) {
+                    if let Ok(Some(name)) = crate::rig::capture_chat_suggestion(
+                        &state,
+                        &workspace_id,
+                        conversation.worktree_id.as_deref(),
+                        &response,
+                    ) {
+                        emit_with_metadata(
+                            &app,
+                            &request_id,
+                            &conversation_id,
+                            "activity",
+                            format!("{name} captured — open the Rig tab to review and render it"),
+                            Some("ollama"),
+                            None,
+                        );
+                    }
+                }
+            }
+            let _ = update_message(&state, &assistant_id, &response, "completed");
+            remove_request(&state, &request_id);
+            emit_with_metadata(
+                &app,
+                &request_id,
+                &conversation_id,
+                "completed",
+                response,
+                Some("ollama"),
+                None,
+            );
+        }
+        Err(crate::ollama_transport::OllamaTransportError::Cancelled) => {
+            let cancelled_content = if streamed_response.trim().is_empty() {
+                "Request cancelled"
+            } else {
+                streamed_response.as_str()
+            };
+            let _ = update_message(&state, &assistant_id, cancelled_content, "cancelled");
+            remove_request(&state, &request_id);
+            emit_with_metadata(
+                &app,
+                &request_id,
+                &conversation_id,
+                "cancelled",
+                "Request cancelled",
+                Some("ollama"),
+                None,
+            );
+        }
+        Err(error) => finish_ollama_failure(
+            &app,
+            &state,
+            &request_id,
+            &conversation_id,
+            Some(&assistant_id),
+            ollama::transport_error(error).message,
+            None,
+        ),
+    }
+}
+
+fn remove_request(state: &AppState, request_id: &str) {
+    state
+        .cancellers
+        .lock()
+        .ok()
+        .map(|mut values| values.remove(request_id));
+}
+
+fn finish_ollama_failure(
+    app: &AppHandle,
+    state: &AppState,
+    request_id: &str,
+    conversation_id: &str,
+    assistant_id: Option<&str>,
+    message: String,
+    handoff_provider: Option<&str>,
+) {
+    if let Some(id) = assistant_id {
+        let _ = update_message(state, id, &message, "failed");
+    }
+    remove_request(state, request_id);
+    emit_with_metadata(
+        app,
+        request_id,
+        conversation_id,
+        "failed",
+        message,
+        Some("ollama"),
+        handoff_provider,
+    );
+}
+
+fn finish_ollama_cancelled(
+    app: &AppHandle,
+    state: &AppState,
+    request_id: &str,
+    conversation_id: &str,
+    handoff_provider: Option<&str>,
+) {
+    remove_request(state, request_id);
+    emit_with_metadata(
+        app,
+        request_id,
+        conversation_id,
+        "cancelled",
+        "Request cancelled",
+        Some("ollama"),
+        handoff_provider,
+    );
 }
 
 struct ProviderRun {

@@ -7,6 +7,8 @@ mod error;
 mod jobs;
 mod models;
 mod motion_planner;
+mod ollama;
+mod ollama_transport;
 mod packs;
 mod providers;
 mod quality;
@@ -77,6 +79,11 @@ pub fn run() {
             providers::test_image_provider,
             providers::start_provider_message,
             providers::cancel_provider_request,
+            ollama::get_ollama_settings,
+            ollama::save_ollama_settings,
+            ollama::refresh_ollama_models,
+            ollama::test_ollama_connection,
+            settings::set_generation_provider,
             motion_planner::plan_motion,
             references::list_reference_images,
             references::import_reference_image,

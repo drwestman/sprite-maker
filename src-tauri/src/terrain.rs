@@ -334,8 +334,8 @@ fn expand_blob_atlas(
 ) -> CommandResult<DynamicImage> {
     if input.tile_width < 2
         || input.tile_height < 2
-        || input.tile_width % 2 != 0
-        || input.tile_height % 2 != 0
+        || !input.tile_width.is_multiple_of(2)
+        || !input.tile_height.is_multiple_of(2)
     {
         return Err(CommandError::new(
             "invalid_blob_tile_size",

@@ -15,3 +15,6 @@ __pycache__/
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# openlore analysis artifacts
+.openlore/
