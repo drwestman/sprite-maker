@@ -10,7 +10,9 @@
   let frame = $state(0);
   let playing = $state(true);
   let exporting = $state(false);
-  let frames = $derived(generation.assetIds.map(id => assets.find(asset => asset.id === id)).filter((asset): asset is Asset => Boolean(asset)));
+  // Bolt optimization: Map assets by ID for O(1) lookups instead of scanning the assets array repeatedly (O(M * N) -> O(M + N))
+  let assetsById = $derived(new Map(assets.map(asset => [asset.id, asset])));
+  let frames = $derived(generation.assetIds.map(id => assetsById.get(id)).filter((asset): asset is Asset => Boolean(asset)));
   let animation = $derived(animations.find(item => item.id === generation.animationId));
   let current = $derived(frames[frame] ?? frames[0]);
 

@@ -4,7 +4,9 @@
   import type { Asset, AssetPack } from "$lib/types";
 
   let { pack, assets, onView }: { pack: AssetPack; assets: Asset[]; onView: (pack: AssetPack) => void } = $props();
-  let items = $derived(pack.files.map(file => assets.find(asset => asset.relativePath === file)).filter((asset): asset is Asset => Boolean(asset)));
+  // Bolt optimization: Map assets by relative path for O(1) lookups instead of scanning assets array repeatedly (O(M * N) -> O(M + N))
+  let assetsByPath = $derived(new Map(assets.map(asset => [asset.relativePath, asset])));
+  let items = $derived(pack.files.map(file => assetsByPath.get(file)).filter((asset): asset is Asset => Boolean(asset)));
 </script>
 
 <section class="pack-card" aria-label={`Generated asset pack ${pack.name}`}>
