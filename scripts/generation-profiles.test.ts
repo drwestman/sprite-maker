@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { GENERATION_PRESETS, normalizeGenerationProfile, selectProviderModel } from "../src/lib/generation-profiles";
+import { defaultImageProviderId } from "../src/lib/generation-profiles";
 
 describe("generation profile defaults", () => {
   test("uses a 128 by 128 mid-quality canvas by default", () => {
@@ -28,5 +29,19 @@ describe("generation profile defaults", () => {
     expect(selectProviderModel("", "default:model", modes)).toBe("default:model");
     expect(selectProviderModel("", "", modes)).toBe("llama3.2:latest");
     expect(selectProviderModel("", "", [])).toBe("");
+  });
+
+  test("maps cursor chats to native cursor image generation", () => {
+    expect(defaultImageProviderId("cursor")).toBe("cursor-image");
+    expect(defaultImageProviderId("codex")).toBe("imagegen");
+    expect(defaultImageProviderId("claude")).toBe("provider-native");
+    expect(normalizeGenerationProfile({ imageProviderId: "imagegen" }, [], "cursor").imageProviderId).toBe("cursor-image");
+    expect(normalizeGenerationProfile({ imageProviderId: "grok-image" }, [], "cursor").imageProviderId).toBe("grok-image");
+  });
+
+  test("maps antigravity chats to native antigravity image generation", () => {
+    expect(defaultImageProviderId("antigravity")).toBe("antigravity-image");
+    expect(normalizeGenerationProfile({ imageProviderId: "imagegen" }, [], "antigravity").imageProviderId).toBe("antigravity-image");
+    expect(normalizeGenerationProfile({ imageProviderId: "grok-image" }, [], "antigravity").imageProviderId).toBe("grok-image");
   });
 });

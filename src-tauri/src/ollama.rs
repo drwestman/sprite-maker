@@ -314,6 +314,47 @@ pub(crate) async fn detect_status(state: &AppState) -> ProviderStatus {
     }
 }
 
+pub(crate) fn detect_status_sync(state: &AppState) -> ProviderStatus {
+    let state = state.clone();
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map(|runtime| runtime.block_on(detect_status(&state)))
+            .unwrap_or_else(|error| ProviderStatus {
+                id: "ollama".into(),
+                name: "Ollama".into(),
+                kind: "agent".into(),
+                installed: false,
+                executable: None,
+                status: "offline".into(),
+                detail: format!("Could not probe Ollama: {error}"),
+                modes: Vec::new(),
+                capabilities: capabilities(None),
+                configurable: true,
+                has_api_key: false,
+                base_url: None,
+                model: None,
+            })
+    })
+    .join()
+    .unwrap_or_else(|_| ProviderStatus {
+        id: "ollama".into(),
+        name: "Ollama".into(),
+        kind: "agent".into(),
+        installed: false,
+        executable: None,
+        status: "offline".into(),
+        detail: "Could not probe Ollama".into(),
+        modes: Vec::new(),
+        capabilities: capabilities(None),
+        configurable: true,
+        has_api_key: false,
+        base_url: None,
+        model: None,
+    })
+}
+
 fn ollama_status(
     settings: StoredOllamaSettings,
     models: Vec<OllamaModel>,
@@ -380,10 +421,6 @@ pub(crate) async fn selected_model(
         Some(details),
     );
     Ok((client, model))
-}
-
-pub(crate) fn model_capabilities(model: &OllamaModel) -> ProviderCapabilities {
-    capabilities(Some(model))
 }
 
 pub(crate) fn validate_reference_images(
@@ -489,21 +526,7 @@ pub(crate) fn structured_format() -> Option<serde_json::Value> {
     Some(serde_json::Value::String("json".into()))
 }
 
-pub(crate) async fn complete_text_request(
-    state: &AppState,
-    model: &OllamaModel,
-    messages: Vec<OllamaChatMessage>,
-    format: Option<serde_json::Value>,
-) -> CommandResult<String> {
-    let settings = load_settings(state)?;
-    let client = client(&settings)?;
-    let request = request(model, messages, format);
-    client
-        .complete_chat_uncancelled(&request)
-        .await
-        .map_err(transport_error)
-}
-
+#[cfg(test)]
 pub(crate) fn draft_prompt(
     prompt: &str,
     context: &str,
@@ -673,10 +696,8 @@ mod tests {
     use crate::ollama_transport::{OllamaShowResponse, OllamaTag};
     use crate::{database, AppState};
     use std::{
-        collections::HashMap,
         io::{Read, Write},
         net::TcpListener,
-        sync::Mutex,
         thread,
     };
     use uuid::Uuid;
@@ -832,10 +853,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("sprite-studio-ollama-test-{}", Uuid::new_v4()));
         let connection = database::open(&root.join("app.sqlite3")).expect("database should open");
-        let state = AppState {
-            db: Mutex::new(connection),
-            cancellers: Mutex::new(HashMap::new()),
-        };
+        let state = AppState::from_connection(connection);
 
         let settings = save_ollama_settings_inner(
             OllamaSettingsInput {
@@ -898,10 +916,7 @@ mod tests {
         });
         let root = std::env::temp_dir().join(format!("sprite-studio-ollama-test-{}", Uuid::new_v4()));
         let connection = database::open(&root.join("app.sqlite3")).expect("database should open");
-        let state = AppState {
-            db: Mutex::new(connection),
-            cancellers: Mutex::new(HashMap::new()),
-        };
+        let state = AppState::from_connection(connection);
 
         let result = test_ollama_connection_inner(
             Some(OllamaSettingsInput {
