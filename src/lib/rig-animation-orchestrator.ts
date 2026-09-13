@@ -82,7 +82,9 @@ export function shouldRunNativeRigFirst(
   command: string | undefined,
   polishMode: AnimationPolishMode,
   asset?: Asset,
+  imageProviderId?: string,
 ): boolean {
+  if (imageProviderId === "mflux") return false;
   return command === "animate"
     && (polishMode === "rig" || polishMode === "ai-polish" || polishMode === "full-redraw")
     && Boolean(asset);
@@ -296,7 +298,9 @@ export function needsNativeRigMasterPhase(
   command: string | undefined,
   asset?: Asset,
   selectedPolishMode?: AnimationPolishMode,
+  imageProviderId?: string,
 ): boolean {
+  if (imageProviderId === "mflux") return false;
   if (asset) return false;
   const polishMode = selectedPolishMode ?? parsePolishModeFromPrompt(prompt);
   if (polishMode !== "rig" && polishMode !== "ai-polish" && polishMode !== "full-redraw") return false;

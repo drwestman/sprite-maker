@@ -28,7 +28,7 @@ export function defaultImageProviderId(agentProviderId: string): string {
 }
 
 export function profileForQuality(quality: Exclude<GenerationQuality, "custom">, current?: ChatGenerationProfile): ChatGenerationProfile {
-  return { profileVersion: 8, quality, ...GENERATION_PRESETS[quality], frameMode: current?.frameMode ?? "auto", allowInterpolation: current?.allowInterpolation ?? true, allowAutoAdjust: current?.allowAutoAdjust ?? true, model: current?.model ?? "", reasoningEffort: current?.reasoningEffort ?? "", imageProviderId: current?.imageProviderId ?? "imagegen" };
+  return { profileVersion: 9, quality, ...GENERATION_PRESETS[quality], frameMode: current?.frameMode ?? "auto", allowInterpolation: current?.allowInterpolation ?? true, allowAutoAdjust: current?.allowAutoAdjust ?? true, imageInputMode: current?.imageInputMode ?? "text-to-image", imageStrength: current?.imageStrength ?? 0.4, model: current?.model ?? "", reasoningEffort: current?.reasoningEffort ?? "", imageProviderId: current?.imageProviderId ?? "imagegen" };
 }
 
 export function normalizeGenerationProfile(value: unknown, modes: ProviderMode[] = [], agentProviderId?: string): ChatGenerationProfile {
@@ -43,6 +43,9 @@ export function normalizeGenerationProfile(value: unknown, modes: ProviderMode[]
     ? requestedMode.reasoningEfforts.includes(requestedEffort) ? requestedEffort : requestedMode.defaultReasoningEffort
     : requestedEffort;
   const frameMode = source.frameMode === "fixed" ? "fixed" : "auto";
+  const imageInputMode = source.imageInputMode === "image-to-image" ? "image-to-image" : "text-to-image";
+  const rawImageStrength = Number(source.imageStrength);
+  const imageStrength = Number.isFinite(rawImageStrength) ? Math.min(1, Math.max(0, rawImageStrength)) : 0.4;
   const minFrames = bounded(upgradeLegacyPreset ? base.minFrames : source.minFrames, base.minFrames, 1, 32);
   const maxFrames = bounded(upgradeLegacyPreset ? base.maxFrames : source.maxFrames, base.maxFrames, minFrames, 32);
   let imageProviderId = String(source.imageProviderId ?? "imagegen");
@@ -53,7 +56,7 @@ export function normalizeGenerationProfile(value: unknown, modes: ProviderMode[]
     imageProviderId = "antigravity-image";
   }
   return {
-    profileVersion: 8,
+    profileVersion: 9,
     quality,
     width: bounded(upgradeLegacyPreset ? base.width : source.width, base.width, 8, 512),
     height: bounded(upgradeLegacyPreset ? base.height : source.height, base.height, 8, 512),
@@ -64,6 +67,8 @@ export function normalizeGenerationProfile(value: unknown, modes: ProviderMode[]
     maxFrames,
     allowInterpolation: source.allowInterpolation ?? true,
     allowAutoAdjust: frameMode === "auto" && (source.allowAutoAdjust ?? true),
+    imageInputMode,
+    imageStrength,
     model,
     reasoningEffort,
     imageProviderId,

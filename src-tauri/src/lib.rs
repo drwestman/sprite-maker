@@ -5,6 +5,7 @@ mod conversations;
 mod database;
 mod error;
 mod jobs;
+mod mflux;
 mod mcp;
 mod models;
 mod motion_planner;
@@ -38,6 +39,8 @@ const APP_IDENTIFIER: &str = "com.jakes.sprite-maker";
 pub struct AppState {
     db: Arc<Mutex<rusqlite::Connection>>,
     cancellers: Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>,
+    mflux_setups: Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>,
+    mflux_worker: Arc<tokio::sync::Mutex<Option<mflux::MfluxWorkerProcess>>>,
     generations: Arc<Mutex<HashMap<String, GenerationSnapshot>>>,
 }
 
@@ -58,6 +61,8 @@ impl AppState {
         Self {
             db: Arc::new(Mutex::new(connection)),
             cancellers: Arc::new(Mutex::new(HashMap::new())),
+            mflux_setups: Arc::new(Mutex::new(HashMap::new())),
+            mflux_worker: Arc::new(tokio::sync::Mutex::new(None)),
             generations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -237,6 +242,10 @@ pub fn run() {
             providers::test_image_provider,
             providers::start_provider_message,
             providers::cancel_provider_request,
+            mflux::get_mflux_settings,
+            mflux::save_mflux_settings,
+            mflux::start_mflux_setup,
+            mflux::cancel_mflux_setup,
             ollama::get_ollama_settings,
             ollama::save_ollama_settings,
             ollama::refresh_ollama_models,

@@ -372,6 +372,14 @@ pub fn update_message_metadata(
     metadata: serde_json::Value,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
+    update_message_metadata_inner(&state, &id, metadata)
+}
+
+pub(crate) fn update_message_metadata_inner(
+    state: &AppState,
+    id: &str,
+    metadata: serde_json::Value,
+) -> CommandResult<()> {
     if !metadata.is_object() {
         return Err(CommandError::new(
             "invalid_metadata",

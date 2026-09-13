@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import type { Animation, AnimationInput, AnimationTemplate, Asset, AssetPack, AssetVersion, BackgroundJob, Conversation, ExportResult, FrameOptimizationResult, GenerationManifest, ImageProviderInput, Message, MotionPlan, OllamaModel, OllamaSettings, OllamaSettingsInput, ProceduralVfxInput, ProjectBackup, ProviderConnectionTest, ProviderInstallResult, ProviderRequestOptions, ProviderStatus, QualityReport, ReferenceCategory, ReferenceImage, RigFitReport, RigInput, RigRenderResult, RigSuggestion, Rig, SidebarSnapshot, SpriteSheet, SpriteSheetInput, TemplateApplication, TerrainExportInput, TerrainExportResult, VfxEffect, Workspace, Worktree, WorktreeKind, WorkspaceRigSpec } from "$lib/types";
+import { mergeMfluxProvider } from "$lib/mflux";
+import type { Animation, AnimationInput, AnimationTemplate, Asset, AssetPack, AssetVersion, BackgroundJob, Conversation, ExportResult, FrameOptimizationResult, GenerationManifest, ImageProviderInput, Message, MfluxSettings, MfluxSettingsInput, MotionPlan, OllamaModel, OllamaSettings, OllamaSettingsInput, ProceduralVfxInput, ProjectBackup, ProviderConnectionTest, ProviderInstallResult, ProviderRequestOptions, ProviderStatus, QualityReport, ReferenceCategory, ReferenceImage, RigFitReport, RigInput, RigRenderResult, RigSuggestion, Rig, SidebarSnapshot, SpriteSheet, SpriteSheetInput, TemplateApplication, TerrainExportInput, TerrainExportResult, VfxEffect, Workspace, Worktree, WorktreeKind, WorkspaceRigSpec } from "$lib/types";
 
 export const api = {
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
@@ -33,7 +34,7 @@ export const api = {
   recordChatAssistant: (conversationId: string, assistantContent: string) =>
     invoke<Message[]>("record_chat_assistant", { conversationId, assistantContent }),
   updateMessageMetadata: (id: string, metadata: Record<string, unknown>) => invoke<void>("update_message_metadata", { id, metadata }),
-  detectProviders: () => invoke<ProviderStatus[]>("detect_providers"),
+  detectProviders: async () => mergeMfluxProvider(await invoke<ProviderStatus[]>("detect_providers"), await invoke<MfluxSettings>("get_mflux_settings")),
   getOllamaSettings: () => invoke<OllamaSettings>("get_ollama_settings"),
   saveOllamaSettings: (input: OllamaSettingsInput) => invoke<OllamaSettings>("save_ollama_settings", { input }),
   refreshOllamaModels: () => invoke<OllamaModel[]>("refresh_ollama_models"),
@@ -44,6 +45,10 @@ export const api = {
   saveImageProvider: (input: ImageProviderInput) => invoke<ProviderStatus>("save_image_provider", { input }),
   deleteImageProvider: (id: string) => invoke<void>("delete_image_provider", { id }),
   testImageProvider: (input: ImageProviderInput) => invoke<ProviderConnectionTest>("test_image_provider", { input }),
+  getMfluxSettings: () => invoke<MfluxSettings>("get_mflux_settings"),
+  saveMfluxSettings: (input: MfluxSettingsInput) => invoke<MfluxSettings>("save_mflux_settings", { input }),
+  startMfluxSetup: () => invoke<string>("start_mflux_setup"),
+  cancelMfluxSetup: (setupId: string) => invoke<void>("cancel_mflux_setup", { setupId }),
   startProviderMessage: (conversationId: string, prompt: string, context?: string, options?: ProviderRequestOptions) => invoke<string>("start_provider_message", { conversationId, prompt, context, options }),
   cancelProviderRequest: (requestId: string) => invoke<void>("cancel_provider_request", { requestId }),
   planMotion: (prompt: string, generation: ProviderRequestOptions["generation"]) => invoke<MotionPlan>("plan_motion", { prompt, generation }),

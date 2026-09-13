@@ -211,6 +211,8 @@ pub fn create_animation_template(
         max_frames: maximum,
         allow_interpolation: true,
         allow_auto_adjust: frame_mode == "auto",
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     };
     let plan = build_motion_plan(motion_description, &planning)?;
     let now = Utc::now().to_rfc3339();
@@ -353,6 +355,8 @@ pub fn apply_animation_template(
         max_frames: template.max_frames,
         allow_interpolation: true,
         allow_auto_adjust: template.frame_mode == "auto",
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     };
     let motion_plan = build_motion_plan(&template.motion_description, &generation)?;
     let phases = template

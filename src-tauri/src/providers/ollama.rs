@@ -1,7 +1,9 @@
 use super::{
     discovery::find_executable,
     execute::{run_provider, ProviderRun},
-    image_providers::{is_provider_native_image, load_image_provider},
+    image_providers::{
+        image_provider_requires_configuration, is_provider_native_image, load_image_provider,
+    },
     modes::provider_is_authenticated,
     stream::{
         emit_with_metadata, provider_auth_help, provider_display_name,
@@ -38,6 +40,7 @@ struct OllamaRun {
     fallback_provider: Option<String>,
     fallback_executable: Option<std::path::PathBuf>,
     native_rig_master_only: bool,
+    mflux_generation: Option<crate::mflux::MfluxGenerationRequest>,
 }
 
 pub(crate) fn start_ollama_run(
@@ -100,17 +103,18 @@ pub(crate) fn start_ollama_run(
     }
     let fallback_id = fallback_provider.as_deref().unwrap_or("ollama");
     let provider_native_image = is_provider_native_image(&image_provider_id, fallback_id);
-    let image_provider = if provider_native_image {
+    let mflux_requested = image_provider_id == "mflux";
+    let image_provider = if provider_native_image || mflux_requested {
         None
     } else {
         load_image_provider(state, &image_provider_id)?
     };
     if fallback_provider.is_some()
-        && !provider_native_image
-        && image_provider_id != "imagegen"
-        && image_provider_id != "cursor-image"
-        && image_provider_id != "antigravity-image"
-        && image_provider.is_none()
+        && image_provider_requires_configuration(
+            &image_provider_id,
+            fallback_id,
+            image_provider.is_some(),
+        )
     {
         return Err(CommandError::new(
             "provider_unavailable",
@@ -118,7 +122,17 @@ pub(crate) fn start_ollama_run(
         ));
     }
 
-    workspace_path(state, &conversation.workspace_id)?;
+    let workspace = workspace_path(state, &conversation.workspace_id)?;
+    let mflux_generation = crate::mflux::build_generation_request(
+        state,
+        &conversation.id,
+        &workspace,
+        &options,
+        &format!(
+            "{}\n\n{}\n\nCreate one clean, centered, motion-ready game-art source master. Use a plain removable background, clear silhouette, and no text, labels, contact sheet, or multiple poses.",
+            prompt, combined_context
+        ),
+    )?;
     add_message(
         state,
         &conversation.id,
@@ -172,6 +186,7 @@ pub(crate) fn start_ollama_run(
         fallback_provider,
         fallback_executable,
         native_rig_master_only: options.native_rig_master_only,
+        mflux_generation,
     };
     let task_state = state.clone();
     tauri::async_runtime::spawn(async move {
@@ -349,6 +364,7 @@ async fn run_ollama(
         reference_paths: run.reference_paths.clone(),
         executable: executable.clone(),
         image_provider,
+        mflux_generation: run.mflux_generation,
         image_prompt: format!(
             "{}\n\n{}\n\nCreate one clean, centered, motion-ready game-art source master. Use a plain removable background, clear silhouette, and no text, labels, contact sheet, or multiple poses.",
             draft.content, run.context

@@ -29,6 +29,13 @@ struct PromptReference {
     content_hash: String,
 }
 
+pub(crate) struct SelectedReferenceInput {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub content_hash: String,
+}
+
 fn prompt_reference_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromptReference> {
     Ok(PromptReference {
         name: row.get(0)?,
@@ -123,4 +130,49 @@ pub fn prompt_context(
         )
     };
     Ok((text, paths))
+}
+
+pub(crate) fn selected_reference_input(
+    state: &crate::AppState,
+    conversation_id: &str,
+    reference_id: &str,
+) -> CommandResult<SelectedReferenceInput> {
+    let connection = state
+        .db
+        .lock()
+        .map_err(|_| CommandError::new("database_locked", "Database lock was poisoned"))?;
+    let reference = connection
+        .query_row(
+            r#"SELECT r.id, r.name, r.path, r.content_hash
+               FROM conversation_references cr
+               JOIN conversations c ON c.id=cr.conversation_id
+               JOIN reference_images r ON r.id=cr.reference_id AND r.project_id=c.workspace_id
+               WHERE cr.conversation_id=?1 AND cr.reference_id=?2 AND cr.active=1"#,
+            params![conversation_id, reference_id],
+            |row| {
+                Ok(SelectedReferenceInput {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    path: row.get(2)?,
+                    content_hash: row.get(3)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            CommandError::new(
+                "invalid_mflux_reference",
+                "Choose an active reference image from this conversation",
+            )
+        })?;
+    if !Path::new(&reference.path).is_file() {
+        return Err(CommandError::new(
+            "reference_file_missing",
+            format!(
+                "The selected reference image {} is missing from disk",
+                reference.name
+            ),
+        ));
+    }
+    Ok(reference)
 }

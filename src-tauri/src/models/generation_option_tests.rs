@@ -11,4 +11,6 @@ fn omitted_frame_policy_defaults_to_full_auto_range() {
     assert_eq!(options.max_frames, 12);
     assert!(options.allow_auto_adjust);
     assert!(!options.allow_interpolation);
+    assert_eq!(options.image_input_mode, "text-to-image");
+    assert_eq!(options.image_strength, 0.4);
 }

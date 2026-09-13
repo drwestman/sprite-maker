@@ -13,6 +13,8 @@ fn options(mode: &str, frames: u32, minimum: u32, maximum: u32) -> GenerationOpt
         max_frames: maximum,
         allow_interpolation: false,
         allow_auto_adjust: mode == "auto",
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     }
 }
 

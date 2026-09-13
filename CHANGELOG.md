@@ -28,6 +28,7 @@
 
 ### Community providers
 
+- Added opt-in MFLUX Z-Image Turbo source-master generation for Apple Silicon macOS, with pinned managed runtime/checkpoint setup, cancellation, readiness gating, focused-reference image-to-image mode, and persisted generation provenance.
 - Added a Cursor CLI adapter for chat, with native Cursor Image generation through GenerateImage when Cursor 2.4 or later is authenticated (`agent login` or `CURSOR_API_KEY`).
 - Added an Antigravity CLI adapter for chat (`agy`), with native Antigravity Image generation through `generate_image`. Install and sign in from Settings → Providers.
 - Show Cursor Image, Codex ImageGen, and Antigravity Image as status cards in Settings → Image generation, with a link to set up the matching CLI.

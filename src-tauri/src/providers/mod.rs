@@ -50,7 +50,7 @@ use discovery::{executable_lookup_names, merge_provider_paths, provider_process_
 #[cfg(test)]
 use headless::apply_std_headless_flags;
 #[cfg(test)]
-use image_providers::is_provider_native_image;
+use image_providers::{image_provider_requires_configuration, is_provider_native_image};
 #[cfg(test)]
 use modes::{antigravity_modes_from_text, cursor_auth_from_status_json};
 #[cfg(test)]

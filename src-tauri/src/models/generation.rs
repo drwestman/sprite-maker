@@ -22,6 +22,36 @@ pub struct ProviderStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MfluxSettings {
+    pub repository: String,
+    pub revision: String,
+    pub runtime_version: String,
+    pub runtime_ready: bool,
+    pub supported_host: bool,
+    pub status: String,
+    pub detail: String,
+    pub cache_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MfluxSettingsInput {
+    pub repository: String,
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MfluxSetupEvent {
+    pub setup_id: String,
+    pub event_type: String,
+    pub stage: String,
+    pub progress: f64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImageProviderInput {
     pub id: String,
     pub name: String,
@@ -91,6 +121,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_image_input_mode() -> String {
+    "text-to-image".into()
+}
+
+fn default_image_strength() -> f64 {
+    0.4
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationOptions {
@@ -109,6 +147,10 @@ pub struct GenerationOptions {
     pub allow_interpolation: bool,
     #[serde(default = "default_true")]
     pub allow_auto_adjust: bool,
+    #[serde(default = "default_image_input_mode")]
+    pub image_input_mode: String,
+    #[serde(default = "default_image_strength")]
+    pub image_strength: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +187,10 @@ pub struct ProviderRequestOptions {
     #[serde(default)]
     pub reference_ids: Vec<String>,
     pub image_provider_id: Option<String>,
+    #[serde(default)]
+    pub mflux_reference_id: Option<String>,
+    #[serde(default)]
+    pub source_asset_path: Option<String>,
     /// When true, the app will rig and render natively after the master is saved.
     #[serde(default)]
     pub native_rig_master_only: bool,

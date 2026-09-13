@@ -167,6 +167,8 @@ export async function runNativeRigChatAnimation(input: NativeRigChatInput): Prom
       maxFrames: input.profile.maxFrames,
       allowInterpolation: input.profile.allowInterpolation,
       allowAutoAdjust: input.profile.allowAutoAdjust,
+      imageInputMode: input.profile.imageInputMode,
+      imageStrength: input.profile.imageStrength,
     },
     knownPackIds: input.knownPackIds,
     startedAt,
@@ -268,7 +270,7 @@ export async function continueNativeRigAfterMaster(
   if (!master) return;
   const motion = prior.motion ?? extractAnimateMotion(prior.prompt);
   const profile = {
-    profileVersion: 8,
+    profileVersion: 9,
     quality: prior.generation.quality,
     width: prior.generation.width,
     height: prior.generation.height,
@@ -279,6 +281,8 @@ export async function continueNativeRigAfterMaster(
     maxFrames: prior.generation.maxFrames,
     allowInterpolation: prior.generation.allowInterpolation,
     allowAutoAdjust: prior.generation.allowAutoAdjust,
+    imageInputMode: prior.generation.imageInputMode,
+    imageStrength: prior.generation.imageStrength,
     model: model ?? "",
     reasoningEffort: reasoningEffort ?? "",
     imageProviderId: "",

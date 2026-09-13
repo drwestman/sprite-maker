@@ -121,6 +121,43 @@ pub(crate) fn detect_providers_inner(state: &AppState) -> Vec<ProviderStatus> {
     })
     .collect();
     providers.push(crate::ollama::detect_status_sync(state));
+    let mflux = crate::mflux::detect_settings(state);
+    providers.push(ProviderStatus {
+        id: "mflux".into(),
+        name: "MFLUX Z-Image Turbo".into(),
+        kind: "image".into(),
+        installed: mflux.runtime_ready,
+        executable: None,
+        status: mflux.status,
+        detail: mflux.detail,
+        modes: vec![crate::models::ProviderMode {
+            id: "z-image-turbo".into(),
+            label: "Z-Image Turbo".into(),
+            description: format!(
+                "Pinned checkpoint {}@{}",
+                mflux.repository,
+                mflux.revision.chars().take(12).collect::<String>()
+            ),
+            default_reasoning_effort: String::new(),
+            reasoning_efforts: Vec::new(),
+        }],
+        capabilities: ProviderCapabilities {
+            text_input: true,
+            image_input: true,
+            multiple_image_input: false,
+            image_editing: true,
+            masks: false,
+            transparency: false,
+            structured_output: false,
+            video_animation: false,
+            image_to_image: true,
+            maximum_reference_images: 1,
+        },
+        configurable: false,
+        has_api_key: false,
+        base_url: None,
+        model: Some("z-image-turbo".into()),
+    });
     providers.push(ProviderStatus {
         id: "imagegen".into(),
         name: "OpenAI ImageGen".into(),

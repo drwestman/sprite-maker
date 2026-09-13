@@ -1,7 +1,8 @@
 use super::{
     antigravity_cli_install_command, antigravity_modes_from_text, apply_std_headless_flags,
     cursor_auth_from_status_json, cursor_cli_install_command, executable_lookup_names,
-    is_provider_native_image, merge_provider_paths, provider_process_path,
+    image_provider_requires_configuration, is_provider_native_image, merge_provider_paths,
+    provider_process_path,
 };
 #[cfg(unix)]
 use super::{login_shell_path, login_shell_path_with_timeout, provider_environment_path};
@@ -263,6 +264,13 @@ fn cursor_image_stays_agent_native_only_for_cursor_chats() {
         "antigravity"
     ));
     assert!(is_provider_native_image("antigravity-image", "claude"));
+}
+
+#[test]
+fn mflux_does_not_require_a_stored_image_provider() {
+    assert!(!image_provider_requires_configuration("mflux", "codex", false));
+    assert!(image_provider_requires_configuration("grok-image", "codex", false));
+    assert!(!image_provider_requires_configuration("grok-image", "codex", true));
 }
 
 #[test]

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { X, Settings, Bot, Image, Palette, CheckCircle2, CircleSlash2, RefreshCw, Plus, Trash2, PlugZap, ShieldCheck, Terminal, ArrowRight, Download, LogIn } from "lucide-svelte";
   import { api } from "$lib/api";
-  import type { ImageProviderInput, OllamaModel, OllamaSettings, OllamaSettingsInput, ProviderConnectionTest, ProviderStatus } from "$lib/types";
+  import type { ImageProviderInput, MfluxSettings, MfluxSettingsInput, MfluxSetupEvent, OllamaModel, OllamaSettings, OllamaSettingsInput, ProviderConnectionTest, ProviderStatus } from "$lib/types";
   import StylePicker from "$lib/components/StylePicker.svelte";
   import type { StylePresetId } from "$lib/style-presets";
   import type { CustomArtStyle } from "$lib/library-types";
@@ -26,6 +27,12 @@
   let ollamaBusy = $state(false);
   let ollamaTesting = $state(false);
   let ollamaResult = $state<{ kind: "success" | "error"; detail: string }>();
+  let mfluxSettings = $state<MfluxSettings>({ repository: "mflux-community/z-image-turbo-mflux-q8", revision: "4430e72e37bf2bc7bc889a42d306ae1b8d3b22de", runtimeVersion: "python3.11;mflux==0.19.1;mlx==0.32.0", runtimeReady: false, supportedHost: false, status: "unsupported", detail: "MFLUX status is loading.", cachePath: "" });
+  let mfluxDraft = $state<MfluxSettingsInput>({ repository: "mflux-community/z-image-turbo-mflux-q8", revision: "4430e72e37bf2bc7bc889a42d306ae1b8d3b22de" });
+  let mfluxBusy = $state(false);
+  let mfluxSetupId = $state<string>();
+  let mfluxProgress = $state(0);
+  let mfluxResult = $state<{ kind: "success" | "error"; detail: string }>();
   let installingProvider = $state<string | null>(null);
   let authenticatingProvider = $state<string | null>(null);
   const sections = [{ id: "providers", name: "Providers", icon: Bot }, { id: "image-providers", name: "Image generation", icon: Image }, { id: "generation", name: "Project art", icon: Palette }, { id: "appearance", name: "Appearance", icon: Settings }, { id: "general", name: "General", icon: ShieldCheck }];
@@ -34,7 +41,7 @@
   const nativeImageProviders = $derived(nativeImageOrder.map((id) => providers.find((item) => item.id === id)).filter((item): item is ProviderStatus => Boolean(item)));
   const customProviders = $derived(providers.filter((item) => item.kind === "image" && item.configurable && item.id !== "midjourney"));
 
-  function statusLabel(status: string) { return ({ ready: "Ready", detected: "Detected", needs_auth: "Sign in required", not_installed: "Not installed", needs_codex: "Needs Codex", needs_cursor: "Needs Cursor", needs_antigravity: "Needs Antigravity", unsupported: "Authorized gateway only", needs_setup: "Needs setup", offline: "Offline", unavailable: "Needs setup" } as Record<string, string>)[status] ?? "Unavailable"; }
+  function statusLabel(status: string) { return ({ ready: "Ready", detected: "Detected", needs_auth: "Sign in required", not_installed: "Not installed", needs_codex: "Needs Codex", needs_cursor: "Needs Cursor", needs_antigravity: "Needs Antigravity", unsupported: "Unsupported host", needs_setup: "Needs setup", offline: "Offline", unavailable: "Needs setup" } as Record<string, string>)[status] ?? "Unavailable"; }
   function nativeImageTitle(id: string, name: string) { return id === "imagegen" ? "Codex ImageGen" : name; }
   function nativeImageHint(id: string) {
     if (id === "cursor-image") return "No API key. Sign in to Cursor CLI under Providers, then choose Cursor Image in a Cursor chat.";
@@ -97,7 +104,59 @@
     catch (error) { ollamaResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) }; }
     finally { ollamaTesting = false; }
   }
-  onMount(() => { void loadOllama(); });
+  async function loadMflux() {
+    try {
+      mfluxSettings = await api.getMfluxSettings();
+      mfluxDraft = { repository: mfluxSettings.repository, revision: mfluxSettings.revision };
+    } catch (error) {
+      mfluxResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  async function saveMflux() {
+    mfluxBusy = true;
+    mfluxResult = undefined;
+    try {
+      mfluxSettings = await api.saveMfluxSettings(mfluxDraft);
+      await onRefresh();
+      mfluxResult = { kind: "success", detail: "MFLUX checkpoint settings saved." };
+    } catch (error) {
+      mfluxResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) };
+    } finally {
+      mfluxBusy = false;
+    }
+  }
+  async function startMfluxSetup() {
+    mfluxBusy = true;
+    mfluxResult = undefined;
+    mfluxProgress = 0;
+    try {
+      mfluxSetupId = await api.startMfluxSetup();
+    } catch (error) {
+      mfluxBusy = false;
+      mfluxResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  async function cancelMfluxSetup() {
+    if (!mfluxSetupId) return;
+    try { await api.cancelMfluxSetup(mfluxSetupId); }
+    catch (error) { mfluxResult = { kind: "error", detail: error instanceof Error ? error.message : String(error) }; }
+  }
+  onMount(() => {
+    void loadOllama();
+    void loadMflux();
+    const unlistenPromise = listen<MfluxSetupEvent>("mflux-setup-event", ({ payload }) => {
+      if (payload.setupId !== mfluxSetupId) return;
+      mfluxProgress = payload.progress;
+      if (payload.eventType === "completed" || payload.eventType === "failed" || payload.eventType === "cancelled") {
+        mfluxBusy = false;
+        mfluxSetupId = undefined;
+        mfluxResult = { kind: payload.eventType === "completed" ? "success" : "error", detail: payload.message };
+        void loadMflux();
+        if (payload.eventType === "completed") void onRefresh();
+      }
+    });
+    return () => { unlistenPromise.then(unlisten => unlisten()); };
+  });
 </script>
 
 <div class="backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && onClose()}>
@@ -128,6 +187,18 @@
           -->
         {:else if section === "image-providers"}
           <div class="heading"><div><span class="eyebrow">Image models</span><h2>Image generation</h2><p>Cursor Image, Codex ImageGen, and Antigravity Image follow the signed-in CLI and need no API key. Grok, Gemini, and authorized endpoints are configured below.</p></div><button class="secondary" onclick={() => editProvider()}><Plus size={13}/>Custom image API</button></div>
+          <div class="mflux-card">
+            <div class="heading-inline"><div><strong>MFLUX · Z-Image Turbo</strong><p>Optional Apple-Silicon runtime for local master, animation-frame, text-to-image, and one-reference image-to-image generation.</p></div><span class:ready={mfluxSettings.status === "ready"} class:unsupported={mfluxSettings.status === "unsupported"}>{statusLabel(mfluxSettings.status)}</span></div>
+            <div class="form-grid">
+              <label>Hugging Face repository<input bind:value={mfluxDraft.repository} disabled={mfluxBusy} autocomplete="off"/><small>Use a repository that contains a compatible Z-Image Turbo checkpoint.</small></label>
+              <label>Immutable revision<input bind:value={mfluxDraft.revision} disabled={mfluxBusy} autocomplete="off"/><small>Exactly 40 hexadecimal commit characters.</small></label>
+            </div>
+            <div class="mflux-meta"><span>Runtime: {mfluxSettings.runtimeVersion}</span><code title={mfluxSettings.cachePath}>{mfluxSettings.cachePath || "Managed application cache"}</code></div>
+            {#if mfluxSetupId}<div class="mflux-progress"><div><span>Setup progress</span><strong>{Math.round(mfluxProgress * 100)}%</strong></div><progress max="1" value={mfluxProgress}></progress></div>{/if}
+            <p class="mflux-detail">{mfluxSettings.detail}</p>
+            {#if mfluxResult}<div class="test-result" class:success={mfluxResult.kind === "success"} class:error={mfluxResult.kind === "error"}>{mfluxResult.detail}</div>{/if}
+            <footer class="ollama-footer"><span>{mfluxSettings.supportedHost ? "Nothing is installed inside project folders." : "Unavailable on this host."}</span><div><button class="secondary" disabled={mfluxBusy} onclick={saveMflux}>{mfluxBusy && !mfluxSetupId ? "Saving…" : "Save checkpoint"}</button>{#if mfluxSetupId}<button class="secondary" onclick={cancelMfluxSetup}>Cancel setup</button>{:else}<button class="primary" disabled={!mfluxSettings.supportedHost || mfluxBusy} onclick={startMfluxSetup}>{mfluxSettings.runtimeReady ? "Repair runtime" : "Install runtime"}</button>{/if}</div></footer>
+          </div>
           <div class="section-label"><Terminal size={13}/><span>CLI image models</span></div>
           <div class="image-provider-cards">
             {#each nativeImageProviders as provider}
@@ -177,4 +248,5 @@
   .provider-form{padding:25px 27px}.form-heading{display:flex;align-items:flex-start;justify-content:space-between}.form-heading h3{font-size:17px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px 12px;margin-top:22px}.form-grid label{font-size:10px;color:var(--muted)}.form-grid label.wide{grid-column:1/-1}.form-grid input,.form-grid select{width:100%;height:36px;display:block;margin-top:6px;padding:0 10px;border:1px solid var(--border-strong);border-radius:7px;outline:0;background:var(--bg);color:var(--text);font:inherit;font-size:11px}.form-grid input:focus,.form-grid select:focus{border-color:var(--accent);box-shadow:0 0 0 3px #a7b66612}.form-grid input:disabled{opacity:.6}.form-grid small{display:block;margin-top:5px;font-size:8px;line-height:1.4;color:var(--faint)}.provider-form footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}.provider-form footer>div{display:flex;gap:7px;margin-left:auto}.danger{height:32px;display:flex;align-items:center;gap:6px;padding:0 9px;border:1px solid #6f4141;border-radius:7px;background:transparent;color:#cf7a75;font:inherit;font-size:10px;cursor:pointer}.test-result{margin-top:13px;padding:9px 10px;border:1px solid var(--border);border-radius:6px;font-size:10px;line-height:1.45;color:var(--muted)}.test-result.success{border-color:#597551;color:#91b785;background:#7193660d}.test-result.error{border-color:#754848;color:#d88a84;background:#9a55550d}.form-placeholder{display:grid;place-content:center;justify-items:center;padding:40px;color:var(--faint);text-align:center}.form-placeholder strong{margin-top:12px;font-size:12px;color:var(--muted)}.form-placeholder p{max-width:300px;margin:7px 0;font-size:10px;line-height:1.5}
   .note{margin-top:22px;padding:16px;border:1px solid var(--border);border-radius:9px;background:var(--surface)}.note strong,.setting-row strong{font-size:12px}.note p{margin:6px 0 0;font-size:11px;line-height:1.55;color:var(--muted)}.setting-row{height:70px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}.setting-row strong,.setting-row small{display:block}.setting-row small{margin-top:4px;font-size:10px;color:var(--faint)}.setting-row select{height:32px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:inherit;font-size:11px}@media(max-width:820px){.modal{width:calc(100vw - 24px);height:calc(100vh - 24px)}.layout{grid-template-columns:170px minmax(0,1fr)}main{padding:28px 24px}.provider-grid,.image-provider-cards{grid-template-columns:1fr}.custom-layout{grid-template-columns:1fr}.saved-list{border-right:0;border-bottom:1px solid var(--border)}.provider-grid p{min-height:0}}
   .handoff-card,.ollama-card{margin-top:15px;padding:15px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}.handoff-card{display:flex;align-items:center;justify-content:space-between;gap:16px}.handoff-card strong,.ollama-card strong{font-size:12px}.handoff-card p,.ollama-card p{margin:5px 0 0;font-size:10px;line-height:1.45;color:var(--muted)}.handoff-card select{height:32px;min-width:170px;padding:0 8px;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg);color:var(--text);font:inherit;font-size:10px}.heading-inline{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.ollama-card .form-grid{margin-top:16px}.ollama-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;padding-top:13px;border-top:1px solid var(--border);font-size:9px;color:var(--faint)}.ollama-footer>div{display:flex;gap:7px}
+  .mflux-card{margin-top:15px;padding:15px;border:1px solid #a7b66638;border-radius:10px;background:linear-gradient(135deg,#a7b6660d,transparent 65%),var(--surface)}.mflux-card strong{font-size:12px}.mflux-card .heading-inline>span{display:inline-flex;padding:4px 6px;border-radius:5px;background:#ffffff05;color:var(--faint);font-size:9px}.mflux-card .heading-inline>span.ready{background:#7da46b16;color:#8eb57a}.mflux-card .heading-inline>span.unsupported{background:#9a55550d;color:#d88a84}.mflux-card .form-grid{margin-top:16px}.mflux-meta{display:flex;justify-content:space-between;gap:12px;margin-top:13px;color:var(--faint);font-size:9px}.mflux-meta code{max-width:52%;margin:0}.mflux-detail{margin:10px 0 0;font-size:10px;line-height:1.45;color:var(--muted)}.mflux-progress{margin-top:13px}.mflux-progress>div{display:flex;justify-content:space-between;font-size:9px;color:var(--faint)}.mflux-progress strong{color:var(--text)}.mflux-progress progress{width:100%;height:5px;margin-top:7px;accent-color:var(--accent)}
 </style>

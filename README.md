@@ -150,7 +150,7 @@ flowchart LR
     F --> G["Validation, playback, and export"]
 ```
 
-Rig-only animation (the default for `/animate` and the Motion dialog) is orchestrated by Sprite Studio itself: the app suggests joint points, saves the rig in the Rig tab, and renders frames with the native Rust renderer. The agent is used only to create the source master when one is missing, or when you opt into AI polish / full redraw.
+Rig-only animation (the default for `/animate` and the Motion dialog when Rig is selected) is orchestrated by Sprite Studio itself: the app suggests joint points, saves the rig in the Rig tab, and renders frames with the native Rust renderer. Selecting MFLUX instead generates the master and every animation frame directly; the agent only performs the final workspace handoff. AI polish / full redraw remain opt-in agent workflows.
 
 For polish modes that still use the agent, animation frames are generated individually in playback order, never as a pose sheet. Every call uses the exact identity reference and temporal neighbors; raw results are normalized back to the requested canvas, transparency, crisp palette, safe edge padding, and intended pose before entering the asset library.
 
@@ -181,6 +181,7 @@ VFX worktrees add their effect tools without removing the rest of the workbench.
 - An installed Codex CLI, Cursor CLI (`agent`), or Antigravity CLI (`agy`) for live agent conversations and access to its reported models
 - Cursor 2.4 or later when using Cursor Image (native GenerateImage). Authenticate with `agent login` or `CURSOR_API_KEY`
 - Antigravity CLI when using Antigravity Image (native `generate_image`). Authenticate with an interactive `agy` session from Settings → Providers
+- Optional MFLUX Z-Image Turbo generation requires Apple Silicon macOS and Python 3.11. Install or repair it from Settings → Image generation; Intel Macs, Linux, and Windows show MFLUX as unavailable.
 
 ### Run in development
 
@@ -189,6 +190,12 @@ bun install
 bun run check
 bun tauri dev
 ```
+
+### Optional local MFLUX
+
+MFLUX is an opt-in local image provider. The app installs the pinned Python 3.11 environment with `mflux==0.19.1` and `mlx==0.32.0`, then downloads the pinned Z-Image Turbo checkpoint only when the first generation starts. The managed runtime, worker, and checkpoint cache stay under the application-data directory shown in Settings, never inside a project. Setup can be cancelled and resumed; a failed setup or checkpoint compatibility check fails closed without falling back to another image provider.
+
+MFLUX supports static `/sprite`, `/character`, `/effect`, and `/pack` generations plus `/animate` requests that generate the master and every ordered animation frame. Text-to-image and one-reference image-to-image are available; image-to-image uses one focused reference, exactly one active reference, or the selected animation master. Explicit Rig-only workflows remain deterministic native rendering, while ordinary chat and `/rig` stay on the selected agent provider.
 
 ### Verify the native core
 

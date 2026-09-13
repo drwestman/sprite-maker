@@ -62,6 +62,8 @@ export function generationRequestFromProfile(profile: ChatGenerationProfile): Pr
     maxFrames: profile.maxFrames,
     allowInterpolation: profile.allowInterpolation,
     allowAutoAdjust: profile.allowAutoAdjust,
+    imageInputMode: profile.imageInputMode,
+    imageStrength: profile.imageStrength,
   };
 }
 
@@ -122,6 +124,8 @@ export function buildProviderOptions(
   profile: ChatGenerationProfile,
   command: SpriteSlashCommand | undefined,
   referenceIds: string[],
+  mfluxReferenceId?: string,
+  sourceAssetPath?: string,
 ): ProviderRequestOptions {
   return {
     model: profile.model || undefined,
@@ -130,6 +134,8 @@ export function buildProviderOptions(
     generation: generationRequestFromProfile(profile),
     referenceIds,
     imageProviderId: profile.imageProviderId,
+    mfluxReferenceId,
+    sourceAssetPath,
   };
 }
 
