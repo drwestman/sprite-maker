@@ -165,7 +165,7 @@ pub fn switch_conversation_provider(
 ) -> CommandResult<Conversation> {
     if !matches!(
         provider.as_str(),
-        "codex" | "claude" | "gemini" | "grok" | "cursor" | "antigravity"
+        "codex" | "claude" | "gemini" | "grok" | "cursor" | "antigravity" | "ollama"
     ) {
         return Err(CommandError::new(
             "provider_unsupported",
@@ -290,14 +290,21 @@ pub(crate) fn get_message(state: &AppState, id: &str) -> CommandResult<Message> 
         .ok_or_else(|| CommandError::new("message_not_found", "Message no longer exists"))
 }
 
-pub fn add_message(
+pub fn add_message_with_metadata(
     state: &AppState,
     conversation_id: &str,
     role: &str,
     kind: &str,
     content: &str,
     status: &str,
+    metadata: serde_json::Value,
 ) -> CommandResult<Message> {
+    if !metadata.is_object() {
+        return Err(CommandError::new(
+            "invalid_metadata",
+            "Message metadata must be a JSON object",
+        ));
+    }
     let message = Message {
         id: Uuid::new_v4().to_string(),
         conversation_id: conversation_id.to_string(),
@@ -305,7 +312,7 @@ pub fn add_message(
         kind: kind.to_string(),
         content: content.to_string(),
         status: status.to_string(),
-        metadata: serde_json::json!({}),
+        metadata,
         created_at: Utc::now().to_rfc3339(),
     };
     let connection = state
@@ -321,6 +328,25 @@ pub fn add_message(
         params![Utc::now().to_rfc3339(), conversation_id],
     )?;
     Ok(message)
+}
+
+pub fn add_message(
+    state: &AppState,
+    conversation_id: &str,
+    role: &str,
+    kind: &str,
+    content: &str,
+    status: &str,
+) -> CommandResult<Message> {
+    add_message_with_metadata(
+        state,
+        conversation_id,
+        role,
+        kind,
+        content,
+        status,
+        serde_json::json!({}),
+    )
 }
 
 pub fn update_message(

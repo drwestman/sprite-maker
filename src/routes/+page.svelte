@@ -28,7 +28,7 @@
   import LogoMark from "$lib/components/LogoMark.svelte";
   import { api } from "$lib/api";
   import { displayPath } from "$lib/display-path";
-  import { defaultImageProviderId, normalizeGenerationProfile } from "$lib/generation-profiles";
+  import { defaultImageProviderId, normalizeGenerationProfile, selectProviderModel } from "$lib/generation-profiles";
   import { buildSpriteGroups, type SpriteGroup } from "$lib/sprite-groups";
   import { animationPolishModeOption } from "$lib/animation-polish-modes";
   import { stylePreset, type ConversationStyleId, type StylePresetId } from "$lib/style-presets";
@@ -85,6 +85,7 @@
   let rigDraftAssetId = $state<string>();
   let providers = $state<ProviderStatus[]>([]);
   let defaultProvider = $state("codex");
+  let generationProvider = $state("codex");
   let activeTab = $state("chat");
   let settingsOpen = $state(false);
   let projectDialogOpen = $state(false);
@@ -130,6 +131,16 @@
   const spriteCount = $derived(buildSpriteGroups(visibleAssets, animations).length);
   const mediaTabs=["sprites","references","animate","rig","terrain","vfx","sheets","packs","play"];
   const activePrimary=$derived(activeTab==="chat"?"chat":mediaTabs.includes(activeTab)?"media":activeTab);
+  $effect(() => {
+    const conversation = selectedConversation;
+    const ollama = providers.find((provider) => provider.id === "ollama");
+    if (!conversation || conversation.provider !== "ollama" || !ollama) return;
+    void loadGenerationProfile(conversation).then((next) => {
+      if (selectedConversation?.id === conversation.id && selectedConversation.provider === "ollama") {
+        generationProfile = next;
+      }
+    }).catch((error) => notify(`Ollama model selection could not be restored: ${errorMessage(error)}`, "error"));
+  });
   function activeWorktreeId(){return worktreeQueryId(selectedWorktree);}
   function generationOptions(){return generationRequestFromProfile(generationProfile);}
   async function currentMotionPlan(){const user=messages.findLast(message=>message.role==="user");if(!user)return undefined;return api.planMotion(user.content,generationOptions()).catch(()=>undefined);}
@@ -165,8 +176,12 @@
   }
   async function initialLoad() {
     try {
-      const shell=await fetchInitialShell();
+      const [shell, savedGenerationProvider] = await Promise.all([
+        fetchInitialShell(),
+        api.getSetting("generation-provider"),
+      ]);
       customSkills=shell.customSkills;customArts=shell.customArts;defaultProvider=shell.defaultProvider;applyTheme(shell.theme);
+      generationProvider=String(savedGenerationProvider ?? "codex");
       workspaces=shell.snapshot.workspaces;loading=false;
       void api.detectProviders().then(value=>providers=value).catch(error=>notify(`Provider detection could not finish: ${errorMessage(error)}`,"error"));
       if(shell.recent){await loadWorkspace(shell.recent,shell.snapshot);return;}
@@ -191,6 +206,19 @@
   async function archiveChat(conversation:Conversation){if(runningRequests[conversation.id]){notify("Stop this chat’s generation before archiving it","error");return;}try{await api.archiveConversation(conversation.id);sidebarConversations=sidebarConversations.filter(item=>item.id!==conversation.id);conversations=conversations.filter(item=>item.id!==conversation.id);if(selectedConversation?.id===conversation.id){const next=conversations[0];if(next)await chooseConversation(next);else await newConversation(selectedWorktree);}notify("Chat archived");}catch(error){notify(errorMessage(error),"error");}}
   async function listArchivedChats(){if(!workspace)return [];try{return await api.listArchivedConversations(workspace.id);}catch(error){notify(errorMessage(error),"error");return [];}}
   async function restoreArchivedChat(conversation:Conversation){try{const restored=await api.restoreConversation(conversation.id);sidebarConversations=[restored,...sidebarConversations.filter(item=>item.id!==restored.id)];conversations=chatsForWorktree(sidebarConversations,selectedWorktree);await chooseConversation(restored);notify("Chat restored");}catch(error){notify(errorMessage(error),"error");throw error;}}
+  function providerFor(conversation:Conversation){return providers.find(provider=>provider.id===conversation.provider);}
+  async function loadGenerationProfile(conversation:Conversation){
+    const saved=await api.getSetting(`conversation-generation:${conversation.id}`);
+    const provider=providerFor(conversation);
+    const next=normalizeGenerationProfile(saved,provider?.modes??[],conversation.provider);
+    if(conversation.provider==="ollama"){
+      const source=saved&&typeof saved==="object"?saved as Record<string,unknown>:{};
+      const savedModel=typeof source.model==="string"?source.model.trim():"";
+      next.model=selectProviderModel(savedModel,provider?.model,provider?.modes);
+      next.reasoningEffort="";
+    }
+    return next;
+  }
   async function activateImportedReferences(created:ReferenceImage[]){if(!selectedConversation)return;await persistConversationReferences(selectedConversation.id,created);const merged=mergeImportedReferences(references,activeReferenceIds,created);references=merged.references;activeReferenceIds=merged.activeReferenceIds;notify(attachedReferenceNotice(created.length));}
   async function attachReferencePaths(paths:string[]){
     if(!selectedWorktree||!selectedConversation){notify("Select a worktree chat before adding a reference","error");return;}
@@ -418,7 +446,7 @@
   async function changeConversationAnimationMode(value:AnimationPolishMode){conversationAnimationMode=value;if(!selectedConversation)return;try{await api.setSetting(`conversation-animation-mode:${selectedConversation.id}`,value);notify(`${animationPolishModeOption(value).label} selected for animations in this chat`);}catch(error){notify(errorMessage(error),"error");}}
   async function saveCustomSkills(value:CustomSkill[]){customSkills=value;try{await api.setSetting("custom-skills",value);notify("Skills library saved");}catch(error){notify(errorMessage(error),"error");}}
   async function saveCustomArts(value:CustomArtStyle[]){customArts=value;try{await api.setSetting("custom-arts",value);notify("Arts library saved");}catch(error){notify(errorMessage(error),"error");}}
-  async function changeGenerationProfile(value:ChatGenerationProfile){if(!selectedConversation)return;generationProfile=normalizeGenerationProfile(value,currentProvider?.modes??[],selectedConversation.provider);try{await api.setSetting(`conversation-generation:${selectedConversation.id}`,generationProfile);}catch(error){notify(errorMessage(error),"error");}}
+  async function changeGenerationProfile(value:ChatGenerationProfile){if(!selectedConversation)return;const next=normalizeGenerationProfile(value,currentProvider?.modes??[],selectedConversation.provider);if(currentProvider?.id==="ollama"&&!value.model.trim())next.model="";generationProfile=next;try{await api.setSetting(`conversation-generation:${selectedConversation.id}`,generationProfile);}catch(error){notify(errorMessage(error),"error");}}
   async function changeConversationProvider(providerId:string){
     if(!selectedConversation)return;
     if(runningRequests[selectedConversation.id]){notify("Stop this chat’s generation before switching providers","error");return;}
@@ -427,6 +455,7 @@
       const changed=await api.switchConversationProvider(selectedConversation.id,providerId);
       const nextProvider=providers.find(provider=>provider.id===providerId);
       const nextProfile=normalizeGenerationProfile({...generationProfile,model:"",reasoningEffort:"",imageProviderId:defaultImageProviderId(providerId)},nextProvider?.modes??[],providerId);
+      if(providerId==="ollama")nextProfile.model=nextProvider?.model??"";
       selectedConversation=changed;conversations=conversations.map(item=>item.id===changed.id?changed:item);sidebarConversations=sidebarConversations.map(item=>item.id===changed.id?changed:item);
       generationProfile=nextProfile;await api.setSetting(`conversation-generation:${changed.id}`,nextProfile);
       notify(`${nextProvider?.name??"Provider"} selected. This starts a new provider session; chat history remains visible.`);
@@ -436,6 +465,7 @@
   async function installAgentProvider(providerId:string){try{const result=await api.installAgentProvider(providerId);providers=await api.detectProviders();notify(result.detail);}catch(error){notify(errorMessage(error),"error");throw error;}}
   async function authenticateAgentProvider(providerId:string){try{const result=await api.authenticateAgentProvider(providerId);providers=await api.detectProviders();notify(result.detail);}catch(error){notify(errorMessage(error),"error");throw error;}}
   async function changeDefaultProvider(provider:string){defaultProvider=provider;try{await api.setSetting("default-agent-provider",provider);notify(`${providers.find(item=>item.id===provider)?.name??provider} will be used for new chats`);}catch(error){notify(errorMessage(error),"error");}}
+  async function changeGenerationProvider(provider:string){generationProvider=provider;try{await api.setGenerationProvider(provider);notify(`${providers.find(item=>item.id===provider)?.name??provider} will run generation commands after Ollama drafts`);}catch(error){notify(errorMessage(error),"error");}}
   async function saveImageProvider(input:ImageProviderInput){try{await api.saveImageProvider(input);providers=await api.detectProviders();notify(`${input.name} saved`);}catch(error){notify(errorMessage(error),"error");throw error;}}
   async function deleteImageProvider(id:string){try{await api.deleteImageProvider(id);providers=await api.detectProviders();notify("Custom provider removed");}catch(error){notify(errorMessage(error),"error");throw error;}}
   async function testImageProvider(input:ImageProviderInput){try{return await api.testImageProvider(input);}catch(error){const message=errorMessage(error);notify(message,"error");throw new Error(message);}}
@@ -475,10 +505,14 @@
       const selected=payload.conversationId===selectedConversation?.id;
       if(payload.eventType==="activity"||payload.eventType==="started"){activityByConversation=appendConversationActivity(activityByConversation,payload.conversationId,[payload.content]);}
       if(payload.eventType==="content"&&selected){const next=appendAssistantDelta(messages,payload.content);if(next)messages=next;}
+      if(payload.eventType==="draft"){
+        activityByConversation=appendConversationActivity(activityByConversation,payload.conversationId,["Ollama draft completed — handing off to the configured generation provider"]);
+        if(selected)messages=await api.listMessages(payload.conversationId);
+      }
       if(isTerminalProviderEvent(payload.eventType)){
         const request=runningRequests[payload.conversationId];
         let deferProviderClear=false;
-        if(payload.eventType==="completed"&&request){
+        if(payload.eventType==="completed"&&request&&(request.phase==="master"||(request.command&&request.command!=="rig"))){
           activityByConversation=appendConversationActivity(activityByConversation,payload.conversationId,["Registering the generated sprite"]);
           try{
             if(request.phase==="master"){
@@ -607,7 +641,7 @@
 {/if}
 
 {#if projectDialogOpen}<ProjectDialog onCreated={acceptWorkspace} onClose={()=>projectDialogOpen=false} onError={(message)=>notify(message,"error")}/>{/if}
-{#if settingsOpen}<SettingsModal {providers} {defaultProvider} {theme} {workspaceStyle} customStyles={customArts} onDefaultProvider={changeDefaultProvider} onTheme={changeTheme} onWorkspaceStyle={changeWorkspaceStyle} onRefresh={refreshProviders} onInstallAgentProvider={installAgentProvider} onAuthenticateAgentProvider={authenticateAgentProvider} onSaveImageProvider={saveImageProvider} onDeleteImageProvider={deleteImageProvider} onTestImageProvider={testImageProvider} onClose={()=>settingsOpen=false}/>{/if}
+{#if settingsOpen}<SettingsModal {providers} {defaultProvider} {generationProvider} {theme} {workspaceStyle} customStyles={customArts} onDefaultProvider={changeDefaultProvider} onGenerationProvider={changeGenerationProvider} onTheme={changeTheme} onWorkspaceStyle={changeWorkspaceStyle} onRefresh={refreshProviders} onInstallAgentProvider={installAgentProvider} onAuthenticateAgentProvider={authenticateAgentProvider} onSaveImageProvider={saveImageProvider} onDeleteImageProvider={deleteImageProvider} onTestImageProvider={testImageProvider} onClose={()=>settingsOpen=false}/>{/if}
 {#if worktreeDialog}<WorktreeDialog busy={creatingWorktree} onCreate={createWorktree} onClose={()=>worktreeDialog=false}/>{/if}
 {#if viewedAsset}<SpriteViewer asset={viewedAsset} onAnimate={animateViewedAsset} onDownload={exportAssetFromChat} onClose={()=>viewedAsset=undefined}/>{/if}
 {#if motionAsset}<MotionPromptDialog asset={motionAsset} animationMode={conversationAnimationMode} onAnimationMode={changeConversationAnimationMode} onContinue={(motion)=>prepareMotionInChat(motionAsset!,motion)} onRig={()=>rigAsset(motionAsset!,rigs.find(rig=>rig.assetId===motionAsset!.id)?.id)} onClose={()=>motionAsset=undefined}/>{/if}

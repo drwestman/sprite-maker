@@ -1,9 +1,10 @@
-use super::arguments::validate_provider_options;
+use super::arguments::{validate_provider_options, validate_provider_request_shape};
 use super::detect::provider_capabilities;
 use super::discovery::find_executable;
 use super::execute::{run_provider, ProviderRun};
 use super::image_providers::{is_provider_native_image, load_image_provider};
 use super::modes::provider_is_authenticated;
+use super::ollama::start_ollama_run;
 use super::stream::{provider_auth_help, provider_display_name};
 use crate::{
     conversations::{add_message, get_conversation},
@@ -48,7 +49,7 @@ pub(crate) fn start_provider_run(
     let conversation = get_conversation(state, &conversation_id)?;
     if !matches!(
         conversation.provider.as_str(),
-        "codex" | "claude" | "gemini" | "grok" | "cursor" | "antigravity"
+        "codex" | "claude" | "gemini" | "grok" | "cursor" | "antigravity" | "ollama"
     ) {
         return Err(CommandError::new(
             "provider_unsupported",
@@ -56,6 +57,11 @@ pub(crate) fn start_provider_run(
         ));
     }
     let provider_id = conversation.provider.clone();
+    let options = options.unwrap_or_default();
+    if provider_id == "ollama" {
+        validate_provider_request_shape(&options)?;
+        return start_ollama_run(conversation, prompt, context, options, app, state);
+    }
     let executable = find_executable(&provider_id).ok_or_else(|| {
         CommandError::new(
             "provider_unavailable",
@@ -71,7 +77,6 @@ pub(crate) fn start_provider_run(
             provider_auth_help(&provider_id),
         ));
     }
-    let options = options.unwrap_or_default();
     validate_provider_options(&options)?;
     let capabilities = provider_capabilities(&provider_id);
     if !options.reference_ids.is_empty() && !capabilities.image_input {

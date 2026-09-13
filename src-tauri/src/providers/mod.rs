@@ -10,6 +10,7 @@ mod external_source;
 mod headless;
 mod image_providers;
 mod modes;
+mod ollama;
 mod prompt;
 mod run;
 mod stream;

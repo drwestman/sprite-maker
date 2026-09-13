@@ -85,12 +85,16 @@ fn generation_snapshot_tracks_progress_without_spawning() {
         conversation_id: "chat-1".into(),
         event_type: "activity".into(),
         content: "Codex CLI is working".into(),
+        provider: None,
+        handoff_provider: None,
     });
     state.record_provider_event(&ProviderEvent {
         request_id: "req-1".into(),
         conversation_id: "chat-1".into(),
         event_type: "completed".into(),
         content: "Done".into(),
+        provider: None,
+        handoff_provider: None,
     });
     let snapshot = state.generation_snapshot("req-1").expect("snapshot");
     assert_eq!(snapshot.status, "completed");

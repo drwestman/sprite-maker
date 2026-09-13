@@ -106,5 +106,3 @@ def remove_exact_tree(path):
     except OSError:
         return False
     return True
-
-

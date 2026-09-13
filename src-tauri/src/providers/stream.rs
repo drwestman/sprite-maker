@@ -12,11 +12,36 @@ pub(crate) fn emit(
     event_type: &str,
     content: impl Into<String>,
 ) {
+    emit_with_metadata(
+        app,
+        state,
+        request_id,
+        conversation_id,
+        event_type,
+        content,
+        None,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_with_metadata(
+    app: Option<&AppHandle>,
+    state: &AppState,
+    request_id: &str,
+    conversation_id: &str,
+    event_type: &str,
+    content: impl Into<String>,
+    provider: Option<&str>,
+    handoff_provider: Option<&str>,
+) {
     let event = ProviderEvent {
         request_id: request_id.to_string(),
         conversation_id: conversation_id.to_string(),
         event_type: event_type.to_string(),
         content: content.into(),
+        provider: provider.map(str::to_string),
+        handoff_provider: handoff_provider.map(str::to_string),
     };
     state.record_provider_event(&event);
     if let Some(app) = app {
@@ -104,6 +129,7 @@ pub(crate) fn provider_display_name(id: &str) -> &'static str {
         "grok" => "Grok CLI",
         "cursor" => "Cursor CLI",
         "antigravity" => "Antigravity CLI",
+        "ollama" => "Ollama",
         _ => "Provider CLI",
     }
 }
@@ -116,6 +142,7 @@ pub(crate) fn provider_auth_help(id: &str) -> String {
         "grok" => "Grok CLI is installed but not authenticated. Run `grok login`, then retry.".into(),
         "cursor" => "Cursor CLI is not signed in. Open Settings → Providers, click Sign in to Cursor, complete `agent login`, then retry. You can also set CURSOR_API_KEY in your user environment.".into(),
         "antigravity" => "Antigravity CLI is not signed in. Open Settings → Providers, click Sign in to Antigravity, complete the `agy` Google sign-in, then retry.".into(),
+        "ollama" => "Ollama is not ready. Start Ollama, choose an installed model in Settings, then retry.".into(),
         _ => "The provider is not authenticated.".into(),
     }
 }

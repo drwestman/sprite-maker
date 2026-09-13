@@ -120,6 +120,7 @@ pub(crate) fn detect_providers_inner(state: &AppState) -> Vec<ProviderStatus> {
         }
     })
     .collect();
+    providers.push(crate::ollama::detect_status_sync(state));
     providers.push(ProviderStatus {
         id: "imagegen".into(),
         name: "OpenAI ImageGen".into(),

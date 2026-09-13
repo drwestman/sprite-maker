@@ -20,7 +20,9 @@
   const nativeImageProvider = $derived(provider?.id === "codex" || provider?.id === "cursor" || provider?.id === "antigravity");
 
   function commit(value: ChatGenerationProfile) {
-    return onChange(normalizeGenerationProfile(value, provider?.modes ?? [], provider?.id));
+    const next = normalizeGenerationProfile(value, provider?.modes ?? [], provider?.id);
+    if (provider?.id === "ollama" && !value.model.trim()) next.model = "";
+    return onChange(next);
   }
 
   function chooseQuality(quality: GenerationQuality) {
@@ -78,7 +80,7 @@
       <div><strong>Provider mode</strong><span>{provider?.modes.length ?? 0} available from {provider?.name ?? "provider"}</span></div>
       <div class="fields two">
         <label>Model<select value={profile.model} onchange={(event) => modelChange(event.currentTarget.value)} disabled={!provider?.modes.length}>
-          {#if !provider?.modes.length}<option value="">Provider default</option>{/if}
+          {#if provider?.id === "ollama"}<option value="">Choose model</option>{:else if !provider?.modes.length}<option value="">Provider default</option>{/if}
           {#each provider?.modes ?? [] as mode}<option value={mode.id}>{mode.label}</option>{/each}
         </select></label>
         <label>Reasoning<select value={profile.reasoningEffort} onchange={(event) => commit({ ...profile, reasoningEffort: event.currentTarget.value })} disabled={!efforts.length}>

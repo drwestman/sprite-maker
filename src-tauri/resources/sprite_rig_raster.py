@@ -342,5 +342,3 @@ def nearest_visible_distance(source, width, height, mask, point):
             if source[offset + 3] and mask_contains(mask, x, y):
                 nearest = min(nearest, point_distance((x + 0.5, y + 0.5), point))
     return nearest
-
-

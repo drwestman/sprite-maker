@@ -19,6 +19,9 @@ export type TemplateApplication = { template: AnimationTemplate; targetAsset: As
 export type ProviderMode = { id: string; label: string; description: string; defaultReasoningEffort: string; reasoningEfforts: string[] };
 export type ProviderCapabilities = { textInput: boolean; imageInput: boolean; multipleImageInput: boolean; imageEditing: boolean; masks: boolean; transparency: boolean; structuredOutput: boolean; videoAnimation: boolean; imageToImage: boolean; maximumReferenceImages: number };
 export type ProviderStatus = { id: string; name: string; kind: "agent" | "image"; installed: boolean; executable?: string; status: string; detail: string; modes: ProviderMode[]; capabilities: ProviderCapabilities; configurable: boolean; hasApiKey: boolean; baseUrl?: string; model?: string };
+export type OllamaModel = { name: string; model: string; modifiedAt?: string; size?: number; digest?: string; capabilities: string[]; family?: string; parameterSize?: string; quantizationLevel?: string; vision: boolean; structuredOutput: boolean };
+export type OllamaSettings = { baseUrl: string; model?: string; hasToken: boolean };
+export type OllamaSettingsInput = { baseUrl: string; model: string; bearerToken: string };
 export type ImageProviderInput = { id: string; name: string; providerType: "grok" | "openai-compatible"; baseUrl: string; apiKey: string; model: string };
 export type ProviderConnectionTest = { ok: boolean; detail: string };
 export type ProviderInstallResult = { detail: string; installed: boolean };
@@ -37,7 +40,7 @@ export type ProviderRequestOptions = {
 };
 export type MotionPhase = { name: string; description: string; frameCount: number; timingWeight: number };
 export type MotionPlan = { frameMode: FrameMode; selectedFrameCount: number; minimumFrameCount: number; maximumFrameCount: number; fps: number; looping: boolean; allowInterpolation: boolean; allowAutoAdjust: boolean; explanation: string; phases: MotionPhase[] };
-export type ProviderEvent = { requestId: string; conversationId: string; eventType: "started" | "content" | "activity" | "completed" | "failed" | "cancelled"; content: string };
+export type ProviderEvent = { requestId: string; conversationId: string; eventType: "started" | "content" | "activity" | "draft" | "completed" | "failed" | "cancelled"; content: string; provider?: string; handoffProvider?: string };
 export type GenerationManifest = {
   kind?: "sprite" | "pack";
   name: string;

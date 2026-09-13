@@ -379,4 +379,3 @@ def validate_biped_run(
         )
         if not opposite_extremes:
             fail("biped run needs two wide split contact extremes spaced across the cycle")
-

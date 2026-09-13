@@ -352,4 +352,3 @@ def commit_render(
                 remove_exact_tree(transaction_dir)
         except BaseException:
             pass
-

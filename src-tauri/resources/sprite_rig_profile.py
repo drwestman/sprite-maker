@@ -202,5 +202,3 @@ def validate_rig_profile(spec, parts, frames, width, height, source):
                     "a four-leg run requires named hind_contact, extended_flight, "
                     "fore_contact, and gathered_flight poses"
                 )
-
-

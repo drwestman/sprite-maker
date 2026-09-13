@@ -1,4 +1,6 @@
-use std::{process::Command as StdCommand, sync::OnceLock};
+use std::process::Command as StdCommand;
+#[cfg(windows)]
+use std::sync::OnceLock;
 use tokio::process::Command;
 
 /// GUI Sprite Studio has no console. Spawning `agent.cmd` or `bash.exe` then

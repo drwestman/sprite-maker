@@ -70,6 +70,11 @@ export function normalizeGenerationProfile(value: unknown, modes: ProviderMode[]
   };
 }
 
+export function selectProviderModel(savedModel: unknown, defaultModel?: string, modes: ProviderMode[] = []): string {
+  const candidates = [savedModel, defaultModel, modes[0]?.id];
+  return candidates.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ?? "";
+}
+
 export function slashCommand(prompt: string): SpriteSlashCommand | undefined {
   const match = prompt.trimStart().match(/^\/(animate|sprite|character|effect|pack|rig)(?:\s|$)/i);
   return match?.[1].toLowerCase() as SpriteSlashCommand | undefined;

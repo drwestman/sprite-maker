@@ -390,4 +390,3 @@ def validate_rig(spec, source_path, width, height, source, decoded_master_hash):
     spec["planningMode"] = "ai-rig-deterministic-render"
     spec["masterHash"] = master_hash
     return names, frames, parts, warnings, master_hash, base, layers, quality, canvases
-

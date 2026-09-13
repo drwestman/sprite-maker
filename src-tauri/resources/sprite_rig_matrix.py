@@ -221,4 +221,3 @@ def resolve_frame_matrices(parts, frame):
         local_matrix([0, 0], transforms.get("base", {})),
     )
     return matrices
-

@@ -188,6 +188,12 @@ pub(crate) fn validate_provider_options(options: &ProviderRequestOptions) -> Com
             ));
         }
     }
+    validate_provider_request_shape(options)
+}
+
+pub(crate) fn validate_provider_request_shape(
+    options: &ProviderRequestOptions,
+) -> CommandResult<()> {
     if let Some(effort) = options.reasoning_effort.as_deref() {
         if !matches!(
             effort,

@@ -262,4 +262,3 @@ def validate_world_rotation_support(parts, frame, frame_index):
                     f"uses scaleX={scale_x:g}, scaleY={scale_y:g}"
                 )
             current_name = part_by_name[current_name].get("parent")
-

@@ -153,6 +153,3 @@ def validate_draw_commands(commands, label, palette):
             fail(f"{command_label}.color must be a palette key or hexadecimal color")
         resolved_color = palette.get(str(raw_color), raw_color)
         validate_color_value(resolved_color, f"{command_label}.color")
-
-
-
