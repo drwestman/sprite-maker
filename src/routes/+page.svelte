@@ -48,6 +48,7 @@
     applyAnimationPolishModeToPrompt, buildFullRedrawPrompt, buildMotionPrompt, buildProviderOptions, buildRigPolishPrompt, chatActivityLines, clearRunningRequest, parallelGenerationsInWorkspace,
     generationRequestFromProfile, inferChatCommand, isTerminalProviderEvent, unacceptedGenerationNotice,
   } from "$lib/chat-generation-finalize";
+  import { mfluxReferenceRequired, selectMfluxReferenceId } from "$lib/mflux";
   import {
     attachedReferenceNotice, composerReferenceCategory, importReferenceFiles, importReferencePaths, mergeImportedReferences,
     persistConversationReferences, referenceOverflowNotice, remainingReferenceSlots,
@@ -145,8 +146,7 @@
   function generationOptions(){return generationRequestFromProfile(generationProfile);}
   function selectedMfluxReferenceId(profile: ChatGenerationProfile, referenceIds: string[]) {
     if (profile.imageProviderId !== "mflux" || profile.imageInputMode !== "image-to-image") return undefined;
-    const focused = focusedReferenceId && referenceIds.includes(focusedReferenceId) ? focusedReferenceId : undefined;
-    return focused ?? (referenceIds.length === 1 ? referenceIds[0] : undefined);
+    return selectMfluxReferenceId(focusedReferenceId, referenceIds);
   }
   async function currentMotionPlan(){const user=messages.findLast(message=>message.role==="user");if(!user)return undefined;return api.planMotion(user.content,generationOptions()).catch(()=>undefined);}
 
@@ -318,7 +318,7 @@
             const polishContext=buildChatContext({worktree,focused:references.find(reference=>reference.id===focusedReferenceId),selectedAsset,styleName:style.name,stylePrompt:style.prompt,customSkills});
             const redrawPrompt=buildFullRedrawPrompt(generatedAnimation,frameAssets,motion);
             const mfluxReferenceId=selectedMfluxReferenceId(profile,referenceIds);
-            if(profile.imageProviderId==="mflux"&&profile.imageInputMode==="image-to-image"&&!mfluxReferenceId&&!animateMaster){
+            if(profile.imageProviderId==="mflux"&&profile.imageInputMode==="image-to-image"&&mfluxReferenceRequired(command,prompt,Boolean(animateMaster),Boolean(mfluxReferenceId))){
               notify("MFLUX image-to-image requires one focused reference, or exactly one active reference.","error");
               throw new Error("MFLUX image-to-image requires one selected reference");
             }
@@ -350,7 +350,7 @@
         options.nativeRigMasterOnly=true;
         options.generation={...options.generation,frames:1,fps:1,frameMode:"fixed",minFrames:1,maxFrames:1};
       }
-      if(profile.imageProviderId==="mflux"&&profile.imageInputMode==="image-to-image"&&!mfluxReferenceId&&!animateMaster){
+      if(profile.imageProviderId==="mflux"&&profile.imageInputMode==="image-to-image"&&mfluxReferenceRequired(command,prompt,Boolean(animateMaster),Boolean(mfluxReferenceId))){
         notify("MFLUX image-to-image requires one focused reference, or exactly one active reference.","error");
         throw new Error("MFLUX image-to-image requires one selected reference");
       }

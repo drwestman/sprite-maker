@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mergeMfluxProvider, mfluxProviderStatus } from "../src/lib/mflux";
+import {
+  mergeMfluxProvider,
+  mfluxAnimationRequested,
+  mfluxProviderStatus,
+  mfluxReferenceRequired,
+  selectMfluxReferenceId,
+} from "../src/lib/mflux";
 import type { MfluxSettings, ProviderStatus } from "../src/lib/types";
 
 const settings = (overrides: Partial<MfluxSettings> = {}): MfluxSettings => ({
@@ -50,5 +56,25 @@ describe("MFLUX provider readiness", () => {
     expect(merged.filter(item => item.id === "mflux")).toHaveLength(1);
     expect(merged.find(item => item.id === "mflux")?.status).toBe("needs_setup");
     expect(merged.find(item => item.id === "grok-image")).toBeDefined();
+  });
+
+  test("given a prompt when animation inference runs then it matches backend semantics", () => {
+    expect(mfluxAnimationRequested("animate", "make a walk cycle")).toBe(true);
+    expect(mfluxAnimationRequested(undefined, "create a looping idle animation")).toBe(true);
+    expect(mfluxAnimationRequested(undefined, "create a static treasure chest")).toBe(false);
+    expect(mfluxAnimationRequested("sprite", "create an animated treasure chest")).toBe(false);
+  });
+
+  test("given active references when selecting input then focus wins or the sole reference is used", () => {
+    expect(selectMfluxReferenceId("focused", ["focused", "other"])).toBe("focused");
+    expect(selectMfluxReferenceId("missing", ["only"])).toBe("only");
+    expect(selectMfluxReferenceId(undefined, ["first", "second"])).toBeUndefined();
+  });
+
+  test("given static image-to-image with a selected asset when no reference is selected then it requires a reference", () => {
+    expect(mfluxReferenceRequired(undefined, "create a static treasure chest", true, false)).toBe(true);
+    expect(mfluxReferenceRequired("animate", "make a walk cycle", true, false)).toBe(false);
+    expect(mfluxReferenceRequired("animate", "make a walk cycle", false, false)).toBe(true);
+    expect(mfluxReferenceRequired(undefined, "create a static treasure chest", true, true)).toBe(false);
   });
 });

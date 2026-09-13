@@ -200,5 +200,8 @@ worker = MfluxWorker()
 messages: queue.Queue[dict[str, Any]] = queue.Queue()
 threading.Thread(target=reader, args=(messages,), daemon=True).start()
 while True:
-    request = messages.get()
-    worker.handle(request)
+    try:
+        request = messages.get()
+        worker.handle(request)
+    except KeyboardInterrupt:
+        continue

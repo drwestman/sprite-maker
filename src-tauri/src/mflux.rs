@@ -355,10 +355,7 @@ pub(crate) async fn generate_outputs(
     }
     .await;
     if result.is_err() {
-        worker.take();
-        for path in generated_paths {
-            let _ = fs::remove_file(path);
-        }
+        cleanup_failed_generation(&mut *worker, generated_paths);
     }
     result
 }
@@ -557,6 +554,32 @@ fn animation_requested(options: &ProviderRequestOptions, prompt: &str) -> bool {
         || (options.command.is_none() && prompt_requests_animation(prompt))
 }
 
+fn validate_reference_selection<'a>(
+    selected_id: Option<&'a str>,
+    reference_ids: &[String],
+    focused_id: Option<&str>,
+) -> CommandResult<&'a str> {
+    let selected_id = selected_id.ok_or_else(|| {
+        CommandError::new(
+            "mflux_reference_required",
+            "MFLUX image-to-image requires one focused reference, or exactly one active reference",
+        )
+    })?;
+    if !reference_ids.iter().any(|id| id == selected_id) {
+        return Err(CommandError::new(
+            "mflux_reference_required",
+            "The selected MFLUX reference must be active in this conversation",
+        ));
+    }
+    if reference_ids.len() > 1 && focused_id != Some(selected_id) {
+        return Err(CommandError::new(
+            "mflux_reference_required",
+            "Focus one reference before using MFLUX image-to-image with multiple active references",
+        ));
+    }
+    Ok(selected_id)
+}
+
 fn generation_allowed(options: &ProviderRequestOptions, prompt: &str) -> bool {
     matches!(
         options.command.as_deref(),
@@ -669,30 +692,21 @@ pub(crate) fn build_generation_request(
     let selected_reference = if generation.image_input_mode == "image-to-image"
         && source_master_path.is_none()
     {
-        let selected_id = options.mflux_reference_id.as_deref().ok_or_else(|| {
-            CommandError::new(
-                "mflux_reference_required",
-                "MFLUX image-to-image requires one focused reference, or exactly one active reference",
-            )
-        })?;
-        if !options.reference_ids.iter().any(|id| id == selected_id) {
-            return Err(CommandError::new(
-                "mflux_reference_required",
-                "The selected MFLUX reference must be active in this conversation",
-            ));
-        }
-        if options.reference_ids.len() > 1 {
-            let focus = crate::settings::get_setting_value(
+        let focused_id = if options.reference_ids.len() > 1 {
+            crate::settings::get_setting_value(
                 state,
                 &format!("conversation-focus:{conversation_id}"),
-            )?;
-            if focus.as_str() != Some(selected_id) {
-                return Err(CommandError::new(
-                    "mflux_reference_required",
-                    "Focus one reference before using MFLUX image-to-image with multiple active references",
-                ));
-            }
-        }
+            )?
+            .as_str()
+            .map(str::to_owned)
+        } else {
+            None
+        };
+        let selected_id = validate_reference_selection(
+            options.mflux_reference_id.as_deref(),
+            &options.reference_ids,
+            focused_id.as_deref(),
+        )?;
         Some(crate::references::selected_reference_input(
             state,
             conversation_id,
@@ -807,8 +821,8 @@ fn emit_setup(
     progress: f64,
     message: impl Into<String>,
 ) {
-    let _ = app.emit(
-        "mflux-setup-event",
+    emit_setup_event(
+        app,
         MfluxSetupEvent {
             setup_id: setup_id.into(),
             event_type: event_type.into(),
@@ -817,6 +831,20 @@ fn emit_setup(
             message: message.into(),
         },
     );
+}
+
+fn emit_setup_event(app: &AppHandle, event: MfluxSetupEvent) {
+    let _ = app.emit("mflux-setup-event", event);
+}
+
+fn cancelled_setup_event(setup_id: &str) -> MfluxSetupEvent {
+    MfluxSetupEvent {
+        setup_id: setup_id.into(),
+        event_type: "cancelled".into(),
+        stage: "cancelled".into(),
+        progress: 0.0,
+        message: "MFLUX setup cancelled".into(),
+    }
 }
 
 fn remove_setup(state: &AppState, setup_id: &str) {
@@ -845,6 +873,29 @@ fn log_tail(path: &Path) -> String {
         .join("\n")
 }
 
+fn cleanup_failed_generation<T>(worker: &mut Option<T>, generated_paths: Vec<PathBuf>) {
+    worker.take();
+    for path in generated_paths {
+        let _ = fs::remove_file(path);
+    }
+}
+
+struct SetupLogGuard {
+    path: PathBuf,
+}
+
+impl SetupLogGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for SetupLogGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 async fn run_setup(
     app: AppHandle,
     state: AppState,
@@ -854,6 +905,7 @@ async fn run_setup(
     let root = cache_root();
     let script = root.join("install_mflux_runtime.sh");
     let log_path = root.join(format!("setup-{setup_id}.log"));
+    let _log_guard = SetupLogGuard::new(log_path.clone());
     emit_setup(
         &app,
         &setup_id,
@@ -926,7 +978,7 @@ async fn run_setup(
         _ = &mut cancel_rx => {
             let _ = child.kill().await;
             let _ = child.wait().await;
-            emit_setup(&app, &setup_id, "cancelled", "cancelled", 0.0, "MFLUX setup cancelled");
+            emit_setup_event(&app, cancelled_setup_event(&setup_id));
             remove_setup(&state, &setup_id);
             return;
         }
@@ -977,7 +1029,6 @@ async fn run_setup(
             format!("MFLUX setup could not finish: {error}"),
         ),
     }
-    let _ = fs::remove_file(log_path);
     remove_setup(&state, &setup_id);
 }
 
@@ -1060,8 +1111,9 @@ pub fn cancel_mflux_setup(
 #[cfg(test)]
 mod tests {
     use super::{
-        animation_requested, frame_prompts, generation_allowed, source_master_path,
-        source_size_and_steps, validate_input, validate_repository, validate_revision,
+        animation_requested, cancelled_setup_event, cleanup_failed_generation, frame_prompts,
+        generation_allowed, source_master_path, source_size_and_steps, validate_input,
+        validate_reference_selection, validate_repository, validate_revision, SetupLogGuard,
         DEFAULT_REPOSITORY, DEFAULT_REVISION,
     };
     use crate::models::{MotionPhase, MotionPlan, ProviderRequestOptions};
@@ -1129,6 +1181,57 @@ mod tests {
         options.command = None;
         assert!(animation_requested(&options, "create a looping idle animation"));
         assert!(!animation_requested(&options, "create a static treasure chest"));
+    }
+
+    #[test]
+    fn given_multiple_active_references_when_none_is_focused_then_rejects() {
+        let references = vec!["first".into(), "second".into()];
+        let error = validate_reference_selection(Some("first"), &references, None)
+            .expect_err("multiple active references should require focus");
+        assert_eq!(error.code, "mflux_reference_required");
+    }
+
+    #[test]
+    fn given_one_active_reference_when_it_is_selected_then_accepts() {
+        let references = vec!["only".into()];
+        assert_eq!(
+            validate_reference_selection(Some("only"), &references, None)
+                .expect("the only active reference should be accepted"),
+            "only"
+        );
+    }
+
+    #[test]
+    fn given_setup_early_exit_when_log_guard_drops_then_removes_log() {
+        let path = std::env::temp_dir().join(format!("sprite-studio-mflux-test-{}.log", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "setup failure").expect("test log should be created");
+        {
+            let _guard = SetupLogGuard::new(path.clone());
+            assert!(path.is_file());
+        }
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn given_generation_failure_when_cleanup_runs_then_discards_worker_and_outputs() {
+        let path = std::env::temp_dir().join(format!("sprite-studio-mflux-test-{}.png", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "partial output").expect("partial output should be created");
+        let mut worker = Some("broken worker");
+
+        cleanup_failed_generation(&mut worker, vec![path.clone()]);
+
+        assert!(worker.is_none());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn given_setup_cancellation_when_event_is_built_then_reports_cancelled() {
+        let event = cancelled_setup_event("setup-123");
+
+        assert_eq!(event.setup_id, "setup-123");
+        assert_eq!(event.event_type, "cancelled");
+        assert_eq!(event.stage, "cancelled");
+        assert_eq!(event.progress, 0.0);
     }
 
     #[test]
