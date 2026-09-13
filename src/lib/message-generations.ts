@@ -35,8 +35,10 @@ function mentionsAnimation(content: string, name: string): boolean {
 }
 
 function generationFromAnimation(animation: Animation, assets: Asset[]): SpriteGenerationMetadata | undefined {
+  // Bolt optimization: Build a Map of assets by ID for O(1) frame resolution (O(M * N) -> O(M + N))
+  const assetsById = new Map(assets.map(asset => [asset.id, asset]));
   const frames = animation.frames
-    .map(frame => assets.find(asset => asset.id === frame.assetId))
+    .map(frame => assetsById.get(frame.assetId))
     .filter((asset): asset is Asset => Boolean(asset));
   if (!frames.length) return;
   return {
