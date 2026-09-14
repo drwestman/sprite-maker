@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findAssetByManifestPath, manifestPathsMatch, normalizeManifestPath } from "../src/lib/manifest-path";
+import { buildAssetManifestMap, findAssetByManifestPath, manifestPathsMatch, normalizeManifestPath } from "../src/lib/manifest-path";
 import type { Asset } from "../src/lib/types";
 
 const asset = (relativePath: string): Asset => ({
@@ -27,5 +27,12 @@ describe("manifest path normalization", () => {
   test("finds assets across path separator styles", () => {
     const library = [asset("assets/characters/hero.png")];
     expect(findAssetByManifestPath(library, "assets\\characters\\hero.png")?.id).toBe("assets/characters/hero.png");
+  });
+
+  test("builds asset manifest map for O(1) lookups with normalized keys", () => {
+    const library = [asset("assets/characters/hero.png"), asset("assets/props/sword.png")];
+    const map = buildAssetManifestMap(library);
+    expect(map.get("assets/characters/hero.png")?.id).toBe("assets/characters/hero.png");
+    expect(map.get(normalizeManifestPath(".\\assets\\props\\sword.png"))?.id).toBe("assets/props/sword.png");
   });
 });

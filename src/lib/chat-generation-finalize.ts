@@ -198,8 +198,9 @@ export function findGeneratedPack(
 
 /** Assets whose paths appear in the given file list. */
 export function assetsForPaths(assets: Asset[], files: string[]): Asset[] {
+  const assetMap = new Map(assets.map(asset => [asset.relativePath, asset]));
   return files
-    .map(path => assets.find(asset => asset.relativePath === path))
+    .map(path => assetMap.get(path))
     .filter((asset): asset is Asset => Boolean(asset));
 }
 
@@ -376,7 +377,8 @@ export function buildRigPolishPrompt(animation: Animation, frameAssets: Asset[])
 
 /** Frame assets for an animation, skipping missing library entries. */
 export function animationFrameAssets(animation: Animation, assets: Asset[]): Asset[] {
+  const assetMap = new Map(assets.map(asset => [asset.id, asset]));
   return animation.frames
-    .map(frame => assets.find(asset => asset.id === frame.assetId))
+    .map(frame => assetMap.get(frame.assetId))
     .filter((asset): asset is Asset => Boolean(asset));
 }

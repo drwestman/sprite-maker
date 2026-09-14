@@ -198,8 +198,9 @@ export async function runNativeRigChatAnimation(input: NativeRigChatInput): Prom
     ? await api.recordChatAssistant(input.conversation.id, assistantText)
     : await api.recordChatTurn(input.conversation.id, input.prompt, assistantText);
   const library = await api.listAssets(input.workspaceId);
+  const libraryMap = new Map(library.map(asset => [asset.id, asset]));
   const ordered = orchestrated.render.assetIds
-    .map(id => library.find(asset => asset.id === id))
+    .map(id => libraryMap.get(id))
     .filter((asset): asset is Asset => Boolean(asset));
   const assets = mergeGeneratedAssets(input.currentAssets ?? [], ordered);
   const rigs = await api.listRigs(input.workspaceId, input.worktree?.id);

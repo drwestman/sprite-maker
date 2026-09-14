@@ -1,5 +1,5 @@
 import { api } from "$lib/api";
-import { findAssetByManifestPath, normalizeManifestPath } from "$lib/manifest-path";
+import { buildAssetManifestMap, findAssetByManifestPath, normalizeManifestPath } from "$lib/manifest-path";
 import type { Animation, Asset, GenerationManifest, Message, MotionPlan, SpriteGenerationMetadata } from "$lib/types";
 
 /** Assets that appeared in a scan but were not already known to the shell. */
@@ -9,22 +9,26 @@ export function createdAssetsFromScan(knownIds: Set<string>, nextAssets: Asset[]
 
 /** Prefer the renderer manifest order; otherwise keep the created scan order. */
 export function orderCreatedAssets(created: Asset[], manifest: GenerationManifest | null): Asset[] {
-  return manifest?.files
-    .map(path => findAssetByManifestPath(created, path))
-    .filter((asset): asset is Asset => Boolean(asset)) ?? created;
+  if (!manifest?.files) return created;
+  const assetMap = buildAssetManifestMap(created);
+  return manifest.files
+    .map(path => assetMap.get(normalizeManifestPath(path)))
+    .filter((asset): asset is Asset => Boolean(asset));
 }
 
 /** Resolve workspace assets that match every manifest path, or nothing if any path is missing. */
 export function completeManifestAssets(assets: Asset[], files: string[]): Asset[] | undefined {
-  const ordered = files.map(path => findAssetByManifestPath(assets, path));
+  const assetMap = buildAssetManifestMap(assets);
+  const ordered = files.map(path => assetMap.get(normalizeManifestPath(path)));
   if (ordered.some(asset => !asset)) return;
   return ordered as Asset[];
 }
 
 /** Assets whose relative paths appear in the manifest, skipping gaps. */
 export function assetsFromManifestPaths(assets: Asset[], files: string[]): Asset[] {
+  const assetMap = buildAssetManifestMap(assets);
   return files
-    .map(path => findAssetByManifestPath(assets, path))
+    .map(path => assetMap.get(normalizeManifestPath(path)))
     .filter((asset): asset is Asset => Boolean(asset));
 }
 
