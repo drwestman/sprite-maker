@@ -1,7 +1,8 @@
 use crate::{
     error::{CommandError, CommandResult},
     models::{
-        MfluxSettings, MfluxSettingsInput, MfluxSetupEvent, MotionPlan, ProviderRequestOptions,
+        GenerationOptions, MfluxSettings, MfluxSettingsInput, MfluxSetupEvent, MotionPlan,
+        ProviderRequestOptions,
     },
     motion_planner::build_motion_plan,
     app_data_dir, AppState,
@@ -19,6 +20,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::oneshot,
+    time::{timeout, Duration},
 };
 use uuid::Uuid;
 
@@ -26,6 +28,7 @@ const MFLUX_PROVIDER_KEY: &str = "mflux";
 const DEFAULT_REPOSITORY: &str = "mflux-community/z-image-turbo-mflux-q8";
 const DEFAULT_REVISION: &str = "4430e72e37bf2bc7bc889a42d306ae1b8d3b22de";
 const RUNTIME_VERSION: &str = "python3.11;mflux==0.19.1;mlx==0.32.0";
+const WORKER_CANCELLATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) struct MfluxWorkerProcess {
     _child: Child,
@@ -163,7 +166,22 @@ impl MfluxWorkerProcess {
         loop {
             let mut line = String::new();
             let read_result = if cancellation_sent {
-                self.stdout.read_line(&mut line).await
+                match timeout(
+                    WORKER_CANCELLATION_TIMEOUT,
+                    self.stdout.read_line(&mut line),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        let _ = self._child.kill().await;
+                        let _ = self._child.wait().await;
+                        return Err(CommandError::new(
+                            "request_cancelled",
+                            "Request cancelled",
+                        ));
+                    }
+                }
             } else {
                 tokio::select! {
                     result = self.stdout.read_line(&mut line) => result,
@@ -511,11 +529,11 @@ pub(crate) fn detect_settings(state: &AppState) -> MfluxSettings {
     }
 }
 
-fn source_size_and_steps(quality: &str) -> (u32, u32) {
-    if quality == "low" {
-        (512, 4)
-    } else {
-        (1024, 9)
+fn source_size_and_steps(generation: &GenerationOptions) -> (u32, u32, u32) {
+    match generation.quality.as_str() {
+        "low" => (512, 512, 4),
+        "custom" => (generation.width, generation.height, 9),
+        _ => (1024, 1024, 9),
     }
 }
 
@@ -682,7 +700,7 @@ pub(crate) fn build_generation_request(
             "MFLUX generation requires a generation profile",
         )
     })?;
-    let (source_size, steps) = source_size_and_steps(&generation.quality);
+    let (source_width, source_height, steps) = source_size_and_steps(generation);
     let requested_animation = animation_requested(options, prompt);
     let source_master_path = if requested_animation {
         source_master_path(workspace, options.source_asset_path.as_deref())?
@@ -754,8 +772,8 @@ pub(crate) fn build_generation_request(
             "mflux": "0.19.1",
             "mlx": "0.32.0"
         },
-        "sourceWidth": source_size,
-        "sourceHeight": source_size,
+        "sourceWidth": source_width,
+        "sourceHeight": source_height,
         "targetWidth": generation.width,
         "targetHeight": generation.height,
         "steps": steps,
@@ -778,8 +796,8 @@ pub(crate) fn build_generation_request(
         revision: settings.revision,
         output_path,
         prompt: prompt.to_string(),
-        width: source_size,
-        height: source_size,
+        width: source_width,
+        height: source_height,
         steps,
         guidance: 0.0,
         seed: 42,
@@ -1116,7 +1134,7 @@ mod tests {
         validate_reference_selection, validate_repository, validate_revision, SetupLogGuard,
         DEFAULT_REPOSITORY, DEFAULT_REVISION,
     };
-    use crate::models::{MotionPhase, MotionPlan, ProviderRequestOptions};
+    use crate::models::{GenerationOptions, MotionPhase, MotionPlan, ProviderRequestOptions};
     use std::path::Path;
 
     #[test]
@@ -1145,10 +1163,27 @@ mod tests {
 
     #[test]
     fn maps_quality_to_the_pinned_source_size_and_step_budget() {
-        assert_eq!(source_size_and_steps("low"), (512, 4));
-        assert_eq!(source_size_and_steps("mid"), (1024, 9));
-        assert_eq!(source_size_and_steps("high"), (1024, 9));
-        assert_eq!(source_size_and_steps("custom"), (1024, 9));
+        let options = |quality: &str, width: u32, height: u32| GenerationOptions {
+            quality: quality.into(),
+            width,
+            height,
+            frames: 8,
+            fps: 12,
+            frame_mode: "auto".into(),
+            min_frames: 8,
+            max_frames: 12,
+            allow_interpolation: true,
+            allow_auto_adjust: true,
+            image_input_mode: "text-to-image".into(),
+            image_strength: 0.4,
+        };
+        let low = options("low", 64, 64);
+        let mid = options("mid", 64, 64);
+        let custom = options("custom", 320, 192);
+
+        assert_eq!(source_size_and_steps(&low), (512, 512, 4));
+        assert_eq!(source_size_and_steps(&mid), (1024, 1024, 9));
+        assert_eq!(source_size_and_steps(&custom), (320, 192, 9));
     }
 
     #[test]
@@ -1232,6 +1267,15 @@ mod tests {
         assert_eq!(event.event_type, "cancelled");
         assert_eq!(event.stage, "cancelled");
         assert_eq!(event.progress, 0.0);
+    }
+
+    #[test]
+    fn given_active_generation_when_cancelled_then_worker_uses_cooperative_cancellation() {
+        let worker_source = include_str!("../resources/mflux_worker.py");
+
+        assert!(worker_source.contains("worker.cancel_requested.set()"));
+        assert!(worker_source.contains("if self.cancel_requested.is_set():"));
+        assert!(!worker_source.contains("_thread.interrupt_main()"));
     }
 
     #[test]

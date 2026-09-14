@@ -151,6 +151,9 @@ class MfluxWorker:
             image = self.model.generate_image(
                 **kwargs,
             )
+            if self.cancel_requested.is_set():
+                emit({"id": request_id, "type": "cancelled"})
+                return
             image.save(str(output_path))
         emit({"id": request_id, "type": "completed", "outputPath": str(output_path)})
 
@@ -186,12 +189,6 @@ def reader(messages: queue.Queue[dict[str, Any]]) -> None:
         if isinstance(message, dict):
             if message.get("type") == "cancel":
                 worker.cancel_requested.set()
-                try:
-                    import _thread
-
-                    _thread.interrupt_main()
-                except RuntimeError:
-                    pass
             else:
                 messages.put(message)
 
@@ -200,8 +197,5 @@ worker = MfluxWorker()
 messages: queue.Queue[dict[str, Any]] = queue.Queue()
 threading.Thread(target=reader, args=(messages,), daemon=True).start()
 while True:
-    try:
-        request = messages.get()
-        worker.handle(request)
-    except KeyboardInterrupt:
-        continue
+    request = messages.get()
+    worker.handle(request)
