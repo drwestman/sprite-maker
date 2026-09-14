@@ -7,7 +7,9 @@ describe("generation profile defaults", () => {
     const profile = normalizeGenerationProfile(null);
     expect(profile.quality).toBe("mid");
     expect([profile.width, profile.height]).toEqual([128, 128]);
-    expect(profile.profileVersion).toBe(8);
+    expect(profile.profileVersion).toBe(9);
+    expect(profile.imageInputMode).toBe("text-to-image");
+    expect(profile.imageStrength).toBe(0.4);
   });
 
   test("upgrades saved preset profiles while preserving custom dimensions", () => {
@@ -43,5 +45,13 @@ describe("generation profile defaults", () => {
     expect(defaultImageProviderId("antigravity")).toBe("antigravity-image");
     expect(normalizeGenerationProfile({ imageProviderId: "imagegen" }, [], "antigravity").imageProviderId).toBe("antigravity-image");
     expect(normalizeGenerationProfile({ imageProviderId: "grok-image" }, [], "antigravity").imageProviderId).toBe("grok-image");
+  });
+
+  test("normalizes MFLUX image input settings and strength", () => {
+    const profile = normalizeGenerationProfile({ imageProviderId: "mflux", imageInputMode: "image-to-image", imageStrength: 2 });
+    expect(profile.imageProviderId).toBe("mflux");
+    expect(profile.imageInputMode).toBe("image-to-image");
+    expect(profile.imageStrength).toBe(1);
+    expect(normalizeGenerationProfile({ imageStrength: -1 }).imageStrength).toBe(0);
   });
 });

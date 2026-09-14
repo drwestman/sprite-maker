@@ -56,6 +56,8 @@ fn paired_limb_identity_lock_targets_animated_characters_and_creatures_only() {
         max_frames: 12,
         allow_interpolation: false,
         allow_auto_adjust: true,
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     };
     let character = studio_prompt(
         "character run cycle",
@@ -137,6 +139,8 @@ fn routes_terrain_tilesets_to_one_large_atlas() {
         max_frames: 32,
         allow_interpolation: false,
         allow_auto_adjust: true,
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     };
     let prompt = studio_prompt(
         "make a grassy terrain tilemap like the attached reference",
@@ -344,6 +348,8 @@ fn chat_profile_and_animate_command_override_inferred_defaults() {
         max_frames: 12,
         allow_interpolation: false,
         allow_auto_adjust: false,
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     };
     let prompt = studio_prompt(
         "/animate a hunter walking",
@@ -379,6 +385,8 @@ fn auto_frames_choose_the_smallest_mechanically_complete_rig() {
         max_frames: 12,
         allow_interpolation: false,
         allow_auto_adjust: true,
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     };
     let prompt = studio_prompt(
         "/animate make this uploaded creature walk",
@@ -409,6 +417,8 @@ fn animated_game_objects_use_the_deterministic_rig_harness() {
         max_frames: 12,
         allow_interpolation: false,
         allow_auto_adjust: false,
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     };
     let prompt = studio_prompt(
         "/animate a treasure chest opening",

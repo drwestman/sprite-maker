@@ -18,6 +18,7 @@ pub use import::{
     import_reference_bytes, import_reference_image,
 };
 pub use prompt::prompt_context;
+pub(crate) use prompt::selected_reference_input;
 
 use prompt::validate_category;
 

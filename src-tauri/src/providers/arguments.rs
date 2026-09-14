@@ -234,10 +234,16 @@ fn validate_generation_options(generation: &GenerationOptions) -> CommandResult<
         || !(1..=64).contains(&generation.min_frames)
         || !(1..=64).contains(&generation.max_frames)
         || generation.min_frames > generation.max_frames
+        || !matches!(
+            generation.image_input_mode.as_str(),
+            "text-to-image" | "image-to-image"
+        )
+        || !generation.image_strength.is_finite()
+        || !(0.0..=1.0).contains(&generation.image_strength)
     {
         return Err(CommandError::new(
             "invalid_generation_profile",
-            "Use an 8–512 px canvas, Fixed or Auto frames within 1–64, and 1–60 FPS",
+            "Use an 8–512 px canvas, Fixed or Auto frames within 1–64, 1–60 FPS, and image strength from 0 to 1",
         ));
     }
     Ok(())

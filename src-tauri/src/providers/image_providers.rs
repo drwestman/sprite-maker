@@ -108,6 +108,19 @@ pub(crate) fn is_provider_native_image(image_provider_id: &str, provider_id: &st
         || (image_provider_id == "antigravity-image" && provider_id != "antigravity")
 }
 
+pub(crate) fn image_provider_requires_configuration(
+    image_provider_id: &str,
+    provider_id: &str,
+    configured: bool,
+) -> bool {
+    !is_provider_native_image(image_provider_id, provider_id)
+        && !matches!(
+            image_provider_id,
+            "imagegen" | "cursor-image" | "antigravity-image" | "mflux"
+        )
+        && !configured
+}
+
 fn validate_provider_base_url(value: &str) -> CommandResult<String> {
     let value = value.trim().trim_end_matches('/');
     let parsed = reqwest::Url::parse(value).map_err(|_| {

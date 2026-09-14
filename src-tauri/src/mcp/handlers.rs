@@ -202,6 +202,8 @@ pub(crate) fn generate(
         generation: params.generation.map(into_generation_options),
         reference_ids,
         image_provider_id: params.image_provider_id,
+        mflux_reference_id: None,
+        source_asset_path: None,
         native_rig_master_only,
     };
     let request_id = start_provider_run(
@@ -227,6 +229,8 @@ fn into_generation_options(options: super::schema::McpGenerationOptions) -> Gene
         max_frames: options.max_frames.unwrap_or(12),
         allow_interpolation: options.allow_interpolation.unwrap_or(true),
         allow_auto_adjust: true,
+        image_input_mode: "text-to-image".into(),
+        image_strength: 0.4,
     }
 }
 

@@ -33,12 +33,13 @@ else
   $(error Unsupported host '$(HOST_OS)'. Build releases on macOS, Windows, or Linux.)
 endif
 
-.PHONY: help install check test native-test verify bundle collect release release-macos publish-macos macos linux windows
+.PHONY: help install dev check test native-test verify bundle collect release release-macos publish-macos macos linux windows
 
 help:
 	@printf '%s\n' \
 	  'Sprite Studio local release commands:' \
 	  '  make install       Install locked JavaScript dependencies.' \
+	  '  make dev           Install dependencies and start the app in dev mode.' \
 	  '  make verify        Run frontend and Rust checks.' \
 	  '  make bundle        Build native bundles for this machine.' \
 	  '  make release       Verify, build, and collect this machine’s installers.' \
@@ -50,6 +51,9 @@ help:
 
 install:
 	$(BUN) install --frozen-lockfile
+
+dev: install
+	$(TAURI) dev
 
 check:
 	$(BUN) run check

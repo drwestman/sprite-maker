@@ -2,7 +2,9 @@ use super::arguments::{validate_provider_options, validate_provider_request_shap
 use super::detect::provider_capabilities;
 use super::discovery::find_executable;
 use super::execute::{run_provider, ProviderRun};
-use super::image_providers::{is_provider_native_image, load_image_provider};
+use super::image_providers::{
+    image_provider_requires_configuration, is_provider_native_image, load_image_provider,
+};
 use super::modes::provider_is_authenticated;
 use super::ollama::start_ollama_run;
 use super::stream::{provider_auth_help, provider_display_name};
@@ -109,23 +111,31 @@ pub(crate) fn start_provider_run(
             "Midjourney does not provide a public API for this integration",
         ));
     }
-    let image_provider = if provider_native_image {
+    let mflux_requested = image_provider_id == "mflux";
+    let image_provider = if provider_native_image || mflux_requested {
         None
     } else {
         load_image_provider(state, image_provider_id)?
     };
-    if !provider_native_image
-        && image_provider_id != "imagegen"
-        && image_provider_id != "cursor-image"
-        && image_provider_id != "antigravity-image"
-        && image_provider.is_none()
-    {
+    if image_provider_requires_configuration(
+        image_provider_id,
+        &provider_id,
+        image_provider.is_some(),
+    ) {
         return Err(CommandError::new(
             "provider_unavailable",
             "Configure the selected image provider in Settings before generating",
         ));
     }
-    workspace_path(state, &conversation.workspace_id)?;
+    let workspace = workspace_path(state, &conversation.workspace_id)?;
+    let image_prompt = format!("{prompt}\n\n{combined_context}\n\nCreate one clean, centered, motion-ready game-art source master. Use a plain removable background, clear silhouette, and no text, labels, contact sheet, or multiple poses.");
+    let mflux_generation = crate::mflux::build_generation_request(
+        state,
+        &conversation_id,
+        &workspace,
+        &options,
+        &image_prompt,
+    )?;
     add_message(
         state,
         &conversation_id,
@@ -154,7 +164,6 @@ pub(crate) fn start_provider_run(
     let task_app = app;
     let task_state = state.clone();
     let task_request_id = request_id.clone();
-    let image_prompt = format!("{prompt}\n\n{combined_context}\n\nCreate one clean, centered, motion-ready game-art source master. Use a plain removable background, clear silhouette, and no text, labels, contact sheet, or multiple poses.");
     let run = ProviderRun {
         request_id: task_request_id,
         conversation_id,
@@ -174,6 +183,7 @@ pub(crate) fn start_provider_run(
         reference_paths,
         executable,
         image_provider,
+        mflux_generation,
         image_prompt,
         provider_id,
     };

@@ -342,9 +342,13 @@ fn validates_chat_generation_and_provider_modes() {
             max_frames: 12,
             allow_interpolation: false,
             allow_auto_adjust: true,
+            image_input_mode: "text-to-image".into(),
+            image_strength: 0.4,
         }),
         reference_ids: Vec::new(),
         image_provider_id: None,
+        mflux_reference_id: None,
+        source_asset_path: None,
         native_rig_master_only: false,
     };
     assert!(validate_provider_options(&options).is_ok());

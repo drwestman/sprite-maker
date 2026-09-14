@@ -43,6 +43,7 @@ describe("rig animation orchestrator helpers", () => {
     expect(shouldRunNativeRigFirst("animate", "rig", asset)).toBe(true);
     expect(shouldRunNativeRigFirst("animate", "ai-polish", asset)).toBe(true);
     expect(shouldRunNativeRigFirst("animate", "full-redraw", asset)).toBe(true);
+    expect(shouldRunNativeRigFirst("animate", "rig", asset, "mflux")).toBe(false);
   });
 
   test("routes rig-only animate with a context asset through native orchestration", () => {
@@ -79,6 +80,7 @@ describe("rig animation orchestrator helpers", () => {
     expect(needsNativeRigMasterPhase("/animate walk cycle", "animate", undefined)).toBe(false);
     expect(needsNativeRigMasterPhase("create a warrior that walks. Polish mode: AI polish.", undefined, undefined, "ai-polish")).toBe(true);
     expect(needsNativeRigMasterPhase("create a static portrait", undefined, undefined)).toBe(false);
+    expect(needsNativeRigMasterPhase("create a warrior walking forward", undefined, undefined, "rig", "mflux")).toBe(false);
   });
 
   test("does not treat the fly substring inside butterfly as motion intent", () => {

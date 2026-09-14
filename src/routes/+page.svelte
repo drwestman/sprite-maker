@@ -48,6 +48,7 @@
     applyAnimationPolishModeToPrompt, buildFullRedrawPrompt, buildMotionPrompt, buildProviderOptions, buildRigPolishPrompt, chatActivityLines, clearRunningRequest, parallelGenerationsInWorkspace,
     generationRequestFromProfile, inferChatCommand, isTerminalProviderEvent, unacceptedGenerationNotice,
   } from "$lib/chat-generation-finalize";
+  import { mfluxReferenceRequired, selectMfluxReferenceId } from "$lib/mflux";
   import {
     attachedReferenceNotice, composerReferenceCategory, importReferenceFiles, importReferencePaths, mergeImportedReferences,
     persistConversationReferences, referenceOverflowNotice, remainingReferenceSlots,
@@ -143,6 +144,10 @@
   });
   function activeWorktreeId(){return worktreeQueryId(selectedWorktree);}
   function generationOptions(){return generationRequestFromProfile(generationProfile);}
+  function selectedMfluxReferenceId(profile: ChatGenerationProfile, referenceIds: string[]) {
+    if (profile.imageProviderId !== "mflux" || profile.imageInputMode !== "image-to-image") return undefined;
+    return selectMfluxReferenceId(focusedReferenceId, referenceIds);
+  }
   async function currentMotionPlan(){const user=messages.findLast(message=>message.role==="user");if(!user)return undefined;return api.planMotion(user.content,generationOptions()).catch(()=>undefined);}
 
   function notify(message:string,kind:"error"|"notice"="notice") {
@@ -246,11 +251,11 @@
       const outboundPrompt=(command==="animate"||/^\/animate\b/i.test(prompt.trim()))?applyAnimationPolishModeToPrompt(prompt,polishMode):prompt;
       const motion=extractAnimateMotion(prompt);
       const animateMaster=resolveAnimateMasterAsset(prompt,assets,selectedAsset,selectedAsset?.relativePath);
-      if(isAnimateWithoutResolvableMaster(command,polishMode,prompt,assets,selectedAsset,selectedAsset?.relativePath)){
+      if(profile.imageProviderId!=="mflux"&&isAnimateWithoutResolvableMaster(command,polishMode,prompt,assets,selectedAsset,selectedAsset?.relativePath)){
         notify("Select a sprite or include its path (Use assets/... as the exact source master) before /animate.","error");
         throw new Error("Animate requires a resolvable master asset");
       }
-      if(shouldRunNativeRigFirst(command,polishMode,animateMaster)){
+      if(shouldRunNativeRigFirst(command,polishMode,animateMaster,profile.imageProviderId)){
         if(!["ready","detected"].includes(currentProvider?.status??"")){notify("Open Settings to install or sign in to this chat's provider","error");throw new Error("Provider not ready");}
         const requestId=`native-rig-${Date.now()}`;
         const abortController=new AbortController();
@@ -312,7 +317,12 @@
             if(!generatedAnimation||!frameAssets.length){runningRequests=clearRunningRequest(runningRequests,conversation.id,requestId);notify("Rough rig frames rendered but full redraw could not start — no frame assets were found.","error");return;}
             const polishContext=buildChatContext({worktree,focused:references.find(reference=>reference.id===focusedReferenceId),selectedAsset,styleName:style.name,stylePrompt:style.prompt,customSkills});
             const redrawPrompt=buildFullRedrawPrompt(generatedAnimation,frameAssets,motion);
-            const options=buildProviderOptions(profile,command,referenceIds);
+            const mfluxReferenceId=selectedMfluxReferenceId(profile,referenceIds);
+            if(profile.imageProviderId==="mflux"&&profile.imageInputMode==="image-to-image"&&mfluxReferenceRequired(command,prompt,Boolean(animateMaster),Boolean(mfluxReferenceId))){
+              notify("MFLUX image-to-image requires one focused reference, or exactly one active reference.","error");
+              throw new Error("MFLUX image-to-image requires one selected reference");
+            }
+            const options=buildProviderOptions(profile,command,referenceIds,mfluxReferenceId,animateMaster?.relativePath);
             const started=await startChatRequest({conversation,workspaceId:workspace.id,worktree,prompt:redrawPrompt,context:polishContext,options,knownPackIds:packs.map(pack=>pack.id),polishMode,motion});
             runningRequests={...runningRequests,[conversation.id]:started.request};
             if(selectedConversation?.id===conversation.id){
@@ -334,10 +344,15 @@
         }
         return;
       }
-      const options=buildProviderOptions(profile,command,referenceIds);
-      if(needsNativeRigMasterPhase(prompt,command,animateMaster,conversationAnimationMode)){
+      const mfluxReferenceId=selectedMfluxReferenceId(profile,referenceIds);
+      const options=buildProviderOptions(profile,command,referenceIds,mfluxReferenceId,animateMaster?.relativePath);
+      if(needsNativeRigMasterPhase(prompt,command,animateMaster,conversationAnimationMode,profile.imageProviderId)){
         options.nativeRigMasterOnly=true;
         options.generation={...options.generation,frames:1,fps:1,frameMode:"fixed",minFrames:1,maxFrames:1};
+      }
+      if(profile.imageProviderId==="mflux"&&profile.imageInputMode==="image-to-image"&&mfluxReferenceRequired(command,prompt,Boolean(animateMaster),Boolean(mfluxReferenceId))){
+        notify("MFLUX image-to-image requires one focused reference, or exactly one active reference.","error");
+        throw new Error("MFLUX image-to-image requires one selected reference");
       }
       const activity=chatActivityLines(command,prompt,options.generation);
       if(activity.length)activityByConversation=appendConversationActivity(activityByConversation,conversation.id,activity);
@@ -524,10 +539,11 @@
               const selected=originatingConversation.id===selectedConversation?.id;
               const style=selected?effectiveStyle:stylePreset(workspaceStyle,customArts);
               const masterProfile=selected?generationProfile:{
-                profileVersion:8,quality:request.generation.quality,width:request.generation.width,height:request.generation.height,
+                profileVersion:9,quality:request.generation.quality,width:request.generation.width,height:request.generation.height,
                 frames:request.generation.frames,fps:request.generation.fps,frameMode:request.generation.frameMode,
                 minFrames:request.generation.minFrames,maxFrames:request.generation.maxFrames,
                 allowInterpolation:request.generation.allowInterpolation,allowAutoAdjust:request.generation.allowAutoAdjust,
+                imageInputMode:request.generation.imageInputMode,imageStrength:request.generation.imageStrength,
                 model:"",reasoningEffort:"",imageProviderId:defaultImageProviderId(originatingConversation.provider??defaultProvider),
               };
               const nativeRequestId=`native-rig-${Date.now()}`;
