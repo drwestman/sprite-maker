@@ -28,9 +28,10 @@
   let width=$state(64);let height=$state(64);let frames=$state(12);let fps=$state(12);let looping=$state(true);let seed=$state(42);
   let generating=$state(false);
   let playing=$state(true);let frameIndex=$state(0);let background=$state<"checker"|"dark"|"light">("checker");let zoom=$state(5);
+  const assetMap=$derived(new Map(assets.map(asset=>[asset.id,asset])));
   const selectedEffect=$derived(effects.find(effect=>effect.id===selectedEffectId));
   const effectAnimation=$derived(selectedEffect?.animationId?animations.find(animation=>animation.id===selectedEffect.animationId):undefined);
-  const frameAssets=$derived(effectAnimation?.frames.map(frame=>assets.find(asset=>asset.id===frame.assetId)).filter((asset):asset is Asset=>Boolean(asset))??[]);
+  const frameAssets=$derived(effectAnimation?.frames.map(frame=>assetMap.get(frame.assetId)).filter((asset):asset is Asset=>Boolean(asset))??[]);
   const currentAsset=$derived(frameAssets[frameIndex]);
   const cssBlend=$derived(selectedEffect?.blendMode==="multiply"?"multiply":selectedEffect?.blendMode==="normal"?"normal":"screen");
 
