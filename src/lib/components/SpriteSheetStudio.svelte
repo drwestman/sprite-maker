@@ -33,9 +33,10 @@
   let playbackSpeed = $state(1);
   let zoom = $state(4);
 
+  const assetMap = $derived(new Map(assets.map(asset => [asset.id, asset])));
   const animation = $derived(animations.find(item=>item.id===selectedAnimationId));
   const selectedSheet = $derived(sheets.find(item=>item.id===selectedSheetId));
-  const frameAssets = $derived(animation?.frames.map(frame=>assets.find(asset=>asset.id===frame.assetId)).filter((asset):asset is Asset=>Boolean(asset)) ?? []);
+  const frameAssets = $derived(animation?.frames.map(frame=>assetMap.get(frame.assetId)).filter((asset):asset is Asset=>Boolean(asset)) ?? []);
   const currentAsset = $derived(frameAssets[frameIndex]);
   const sheetJobs = $derived(jobs.filter(job=>job.kind==="sprite_sheet"));
   const runningJobs = $derived(sheetJobs.filter(job=>["queued","running","analyzing"].includes(job.status)));
@@ -48,7 +49,7 @@
   }
 
   function configureFor(animation:Animation) {
-    const frameAssets=animation.frames.map(frame=>assets.find(asset=>asset.id===frame.assetId)).filter((asset):asset is Asset=>Boolean(asset));
+    const frameAssets=animation.frames.map(frame=>assetMap.get(frame.assetId)).filter((asset):asset is Asset=>Boolean(asset));
     frameWidth=Math.max(1,...frameAssets.map(asset=>asset.width));
     frameHeight=Math.max(1,...frameAssets.map(asset=>asset.height));
     name=`${animation.name} Sheet`;

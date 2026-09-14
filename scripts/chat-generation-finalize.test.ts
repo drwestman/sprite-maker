@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   appendAssistantDelta, applyAnimationPolishModeToPrompt, buildFullRedrawPrompt, buildMotionPrompt, chatActivityLines, generationViewHandoff, inferChatCommand,
-  isFreshGenerationManifest, isRejectedStaticAnimation, orderedGenerationAssets, parallelGenerationsInWorkspace, stripFrameSuffix,
+  assetsForPaths, isFreshGenerationManifest, isRejectedStaticAnimation, orderedGenerationAssets, parallelGenerationsInWorkspace, stripFrameSuffix,
   unacceptedGenerationNotice,
 } from "../src/lib/chat-generation-finalize";
 import { normalizeGenerationProfile } from "../src/lib/generation-profiles";
@@ -66,6 +66,18 @@ describe("chat generation finalize", () => {
     const related = [asset("b", "b"), asset("a", "a")];
     expect(orderedGenerationAssets(related, related).map(item => item.id)).toEqual(["b", "a"]);
     expect(orderedGenerationAssets([], related).map(item => item.relativePath)).toEqual(["assets/a.png", "assets/b.png"]);
+  });
+
+  test("resolves manifest files across slash styles and ignores missing paths", () => {
+    const library = [asset("hero", "hero"), asset("sword", "sword")];
+    library[0].relativePath = "assets/characters/hero.png";
+    library[1].relativePath = "assets/props/sword.png";
+
+    expect(assetsForPaths(library, [
+      ".\\assets\\props\\sword.png",
+      "./assets/characters/hero.png",
+      "assets/missing.png",
+    ]).map(item => item.id)).toEqual(["sword", "hero"]);
   });
 
   test("injects the selected polish mode into typed /animate prompts", () => {
