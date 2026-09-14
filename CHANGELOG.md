@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Providers
+
+- Added Ollama integration: a local-model transport with model discovery, connection testing, vision, and structured-output checks, plus a generation-handoff mode that drafts a prompt with Ollama and executes the sprite-generation action through a configured CLI provider. Added Ollama configuration settings and an Ollama handoff selector in chat and Settings.
+
 ### Animation
 
 - Rig-only `/animate` resolves the master from the selected sprite or an `assets/...` path in the prompt; `/animate` without a resolvable master shows an explicit error instead of starting a new-character master pass.
