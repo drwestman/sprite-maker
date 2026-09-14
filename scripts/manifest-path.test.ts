@@ -35,4 +35,29 @@ describe("manifest path normalization", () => {
     expect(map.get("assets/characters/hero.png")?.id).toBe("assets/characters/hero.png");
     expect(map.get(normalizeManifestPath(".\\assets\\props\\sword.png"))?.id).toBe("assets/props/sword.png");
   });
+
+  test("Given leading-dot and Windows paths, when building the map, then keys are canonical", () => {
+    const map = buildAssetManifestMap([
+      asset("./assets/characters/hero.png"),
+      asset(".\\assets\\props\\sword.png"),
+    ]);
+
+    expect([...map.keys()]).toEqual(["assets/characters/hero.png", "assets/props/sword.png"]);
+    expect(map.get("assets/characters/hero.png")?.id).toBe("./assets/characters/hero.png");
+    expect(map.get("assets/props/sword.png")?.id).toBe(".\\assets\\props\\sword.png");
+  });
+
+  test("Given duplicate normalized paths, when building the map, then the later asset wins", () => {
+    const first = asset("assets/characters/hero.png");
+    const second = asset(".\\assets\\characters\\hero.png");
+    const map = buildAssetManifestMap([first, second]);
+
+    expect(map.size).toBe(1);
+    expect(map.get("assets/characters/hero.png")?.id).toBe(second.id);
+    expect(findAssetByManifestPath([first, second], "assets/characters/hero.png")?.id).toBe(second.id);
+  });
+
+  test("Given no assets, when building the map, then it is empty", () => {
+    expect(buildAssetManifestMap([])).toEqual(new Map());
+  });
 });

@@ -1,5 +1,5 @@
 import { api } from "$lib/api";
-import { buildAssetManifestMap, findAssetByManifestPath, normalizeManifestPath } from "$lib/manifest-path";
+import { buildAssetManifestMap, normalizeManifestPath } from "$lib/manifest-path";
 import type { Animation, Asset, GenerationManifest, Message, MotionPlan, SpriteGenerationMetadata } from "$lib/types";
 
 /** Assets that appeared in a scan but were not already known to the shell. */

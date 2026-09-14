@@ -1,6 +1,5 @@
 import { api } from "$lib/api";
-import { assetsFromManifestPaths } from "$lib/generation-reconcile";
-import { findAssetByManifestPath } from "$lib/manifest-path";
+import { buildAssetManifestMap, normalizeManifestPath } from "$lib/manifest-path";
 import { cloneSuggestionDraft } from "$lib/rig-draft";
 import type {
   AnimationPolishMode,
@@ -183,8 +182,8 @@ export function extractMasterPathFromPrompt(prompt: string): string | undefined 
   return undefined;
 }
 
-function findAssetByRelativePath(assets: Asset[], relativePath: string): Asset | undefined {
-  return findAssetByManifestPath(assets, relativePath);
+function findAssetByRelativePath(assetMap: ReadonlyMap<string, Asset>, relativePath: string): Asset | undefined {
+  return assetMap.get(normalizeManifestPath(relativePath));
 }
 
 /** Resolve the animate master from selection, prompt path, or chat context. */
@@ -195,13 +194,14 @@ export function resolveAnimateMasterAsset(
   contextAssetPath?: string,
 ): Asset | undefined {
   if (selectedAsset) return selectedAsset;
+  const assetMap = buildAssetManifestMap(assets);
   const promptPath = extractMasterPathFromPrompt(prompt);
   if (promptPath) {
-    const match = findAssetByRelativePath(assets, promptPath);
+    const match = findAssetByRelativePath(assetMap, promptPath);
     if (match) return match;
   }
   if (contextAssetPath) {
-    const match = findAssetByRelativePath(assets, contextAssetPath);
+    const match = findAssetByRelativePath(assetMap, contextAssetPath);
     if (match) return match;
   }
   return undefined;
@@ -210,13 +210,16 @@ export function resolveAnimateMasterAsset(
 /** Pick the master asset from a fresh generation manifest. */
 export function resolveMasterFromManifest(manifest: GenerationManifest | null, assets: Asset[]): Asset | undefined {
   if (!manifest) return undefined;
+  const assetMap = buildAssetManifestMap(assets);
   const orderedPaths = [
     ...(manifest.source ? [manifest.source] : []),
     ...manifest.files,
   ];
-  const matches = assetsFromManifestPaths(assets, orderedPaths);
+  const matches = orderedPaths
+    .map(path => assetMap.get(normalizeManifestPath(path)))
+    .filter((asset): asset is Asset => Boolean(asset));
   if (manifest.source) {
-    const sourceAsset = findAssetByManifestPath(assets, manifest.source);
+    const sourceAsset = findAssetByRelativePath(assetMap, manifest.source);
     if (sourceAsset) return sourceAsset;
   }
   if (matches.length === 1) return matches[0];

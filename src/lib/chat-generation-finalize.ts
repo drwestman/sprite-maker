@@ -20,7 +20,7 @@ import {
   type GenerationActivityLevel,
   activityLevelForLine,
 } from "$lib/generation-status";
-import { normalizeManifestPath } from "$lib/manifest-path";
+import { buildAssetManifestMap, normalizeManifestPath } from "$lib/manifest-path";
 
 export type ActiveChatRequest = {
   id: string;
@@ -198,9 +198,9 @@ export function findGeneratedPack(
 
 /** Assets whose paths appear in the given file list. */
 export function assetsForPaths(assets: Asset[], files: string[]): Asset[] {
-  const assetMap = new Map(assets.map(asset => [asset.relativePath, asset]));
+  const assetMap = buildAssetManifestMap(assets);
   return files
-    .map(path => assetMap.get(path))
+    .map(path => assetMap.get(normalizeManifestPath(path)))
     .filter((asset): asset is Asset => Boolean(asset));
 }
 

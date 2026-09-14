@@ -20,6 +20,5 @@ export function buildAssetManifestMap(assets: Asset[]): Map<string, Asset> {
 
 /** Resolve an asset by manifest path, ignoring slash style differences. */
 export function findAssetByManifestPath(assets: Asset[], path: string): Asset | undefined {
-  const normalized = normalizeManifestPath(path);
-  return assets.find(asset => normalizeManifestPath(asset.relativePath) === normalized);
+  return buildAssetManifestMap(assets).get(normalizeManifestPath(path));
 }
