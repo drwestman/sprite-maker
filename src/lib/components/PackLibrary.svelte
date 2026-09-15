@@ -14,9 +14,11 @@
 
   let search = $state("");
 
-  function packAssets(pack: AssetPack) {
-    const paths = new Set(pack.files);
-    return assets.filter(asset => paths.has(asset.relativePath));
+  // Bolt optimization: Map assets by relativePath for O(1) file resolution instead of filtering assets array repeatedly (O(P * A) -> O(A + P * F))
+  let assetsByPath = $derived(new Map(assets.map(asset => [asset.relativePath, asset])));
+
+  function packAssets(pack: AssetPack): Asset[] {
+    return pack.files.map(file => assetsByPath.get(file)).filter((asset): asset is Asset => Boolean(asset));
   }
 
   let selectedPack = $derived(packs.find(pack => pack.id === selectedPackId));
