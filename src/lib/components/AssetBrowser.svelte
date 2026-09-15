@@ -26,7 +26,16 @@
   let packFiles = $derived(new Set(packs.find(pack => pack.id === packId)?.files ?? []));
   let activePack = $derived(packs.find(pack => pack.id === packId));
   let filtered = $derived(groups.filter(group => (activeCategory === "assets" || group.category === activeCategory) && (!packId || group.frames.some(asset => packFiles.has(asset.relativePath))) && (group.name.toLowerCase().includes(search.toLowerCase()) || group.frames.some(asset => asset.name.toLowerCase().includes(search.toLowerCase())))));
-  let counts = $derived(Object.fromEntries(["characters","creatures","terrain","props","effects"].map(value => [value, groups.filter(group => group.category === value).length])));
+  // Bolt optimization: Single O(N) pass to count categories instead of 5 separate array filter iterations
+  let counts = $derived.by(() => {
+    const acc: Record<string, number> = { characters: 0, creatures: 0, terrain: 0, props: 0, effects: 0 };
+    for (const group of groups) {
+      if (group.category in acc) {
+        acc[group.category]++;
+      }
+    }
+    return acc;
+  });
   let heading = $derived(activeCategory === "assets" ? "All sprites" : activeCategory[0].toUpperCase() + activeCategory.slice(1));
 
   async function refresh() {
