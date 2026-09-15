@@ -8,6 +8,7 @@ const MFLUX_CAPABILITIES = {
   masks: false,
   transparency: false,
   structuredOutput: false,
+  toolCalling: false,
   videoAnimation: false,
   imageToImage: true,
   maximumReferenceImages: 1,
@@ -62,6 +63,9 @@ const ANIMATION_PROMPT_TERMS = [
   "cast",
   "explosion",
   "effect",
+  "sprite sheet",
+  "spritesheet",
+  "frame set",
 ];
 
 /** Mirrors the backend's animation inference for MFLUX source-master selection. */

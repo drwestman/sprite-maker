@@ -95,6 +95,7 @@
           <span class:on={provider.capabilities.imageInput}>Images</span>
           <span class:on={provider.capabilities.multipleImageInput}>Multi-reference</span>
           <span class:on={provider.capabilities.structuredOutput}>Structured</span>
+          <span class:on={provider.capabilities.toolCalling}>Tools</span>
           <span class:on={provider.capabilities.transparency}>Alpha</span>
           {#if provider.capabilities.imageInput}<small>Up to {provider.capabilities.maximumReferenceImages} refs</small>{/if}
         </div>

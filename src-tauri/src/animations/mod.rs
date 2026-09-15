@@ -197,6 +197,14 @@ pub fn list_animations(
     worktree_id: Option<String>,
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<Animation>> {
+    list_animations_inner(&workspace_id, worktree_id.as_deref(), &state)
+}
+
+pub(crate) fn list_animations_inner(
+    workspace_id: &str,
+    worktree_id: Option<&str>,
+    state: &AppState,
+) -> CommandResult<Vec<Animation>> {
     let connection = state
         .db
         .lock()

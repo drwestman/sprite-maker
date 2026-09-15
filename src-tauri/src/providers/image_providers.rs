@@ -55,6 +55,7 @@ pub(crate) fn image_provider_status(provider: &StoredImageProvider) -> ProviderS
             video_animation: false,
             image_to_image: false,
             maximum_reference_images: 0,
+            tool_calling: false,
         },
         configurable: true,
         has_api_key: !provider.api_key.is_empty(),

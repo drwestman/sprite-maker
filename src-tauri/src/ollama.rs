@@ -10,6 +10,7 @@ use crate::{
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::Path;
 use tauri::State;
 
@@ -49,6 +50,8 @@ pub struct OllamaModel {
     pub quantization_level: Option<String>,
     pub vision: bool,
     pub structured_output: bool,
+    pub tool_calling: bool,
+    pub thinking: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +104,14 @@ fn load_settings(state: &AppState) -> CommandResult<StoredOllamaSettings> {
         validate_model_tag(&settings.model)
             .map_err(|error| command_error("invalid_ollama_model", error))?;
     }
+    tracing::debug!(
+        target: "ollama",
+        event = "settings_loaded",
+        endpoint = %settings.base_url,
+        model = %settings.model,
+        has_token = !settings.bearer_token.is_empty(),
+        "Ollama settings loaded"
+    );
     Ok(settings)
 }
 
@@ -134,13 +145,19 @@ fn model_from_tag(tag: OllamaTag, details: Option<OllamaShowResponse>) -> Ollama
         .and_then(|value| value.details.clone())
         .or(tag.details.clone())
         .unwrap_or_default();
-    let vision = capabilities.iter().any(|value| value == "vision");
+    let has_capability = |name: &str| {
+        capabilities
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(name))
+    };
+    let vision = has_capability("vision");
     // Ollama reports text-generating models as `completion`. Those models can
     // use the native `format` field for JSON/structured output even though
     // the show endpoint does not expose a separate structured-output token.
-    let structured_output = capabilities
-        .iter()
-        .any(|value| value == "completion" || value == "structured_output");
+    let structured_output = has_capability("completion") || has_capability("structured_output");
+    let tool_calling =
+        has_capability("tools") || has_capability("tool") || has_capability("tool_calls");
+    let thinking = has_capability("thinking") || has_capability("reasoning");
     OllamaModel {
         name: tag.name.clone(),
         model: tag.model.unwrap_or_else(|| tag.name.clone()),
@@ -156,10 +173,19 @@ fn model_from_tag(tag: OllamaTag, details: Option<OllamaShowResponse>) -> Ollama
         quantization_level: model_details.quantization_level,
         vision,
         structured_output,
+        tool_calling,
+        thinking,
     }
 }
 
 async fn discover_models(client: &OllamaClient) -> Result<Vec<OllamaModel>, OllamaTransportError> {
+    let started = std::time::Instant::now();
+    tracing::debug!(
+        target: "ollama",
+        event = "model_discovery_started",
+        endpoint = %client.base_url(),
+        "Ollama model discovery started"
+    );
     let tags = client.tags().await?;
     let mut models = Vec::with_capacity(tags.len());
     for tag in tags {
@@ -168,6 +194,14 @@ async fn discover_models(client: &OllamaClient) -> Result<Vec<OllamaModel>, Olla
         models.push(model_from_tag(tag, details));
     }
     models.sort_by(|left, right| left.name.cmp(&right.name));
+    tracing::debug!(
+        target: "ollama",
+        event = "model_discovery_completed",
+        endpoint = %client.base_url(),
+        model_count = models.len(),
+        duration_ms = started.elapsed().as_millis() as u64,
+        "Ollama model discovery completed"
+    );
     Ok(models)
 }
 
@@ -179,6 +213,12 @@ fn provider_mode(model: &OllamaModel) -> ProviderMode {
     if model.structured_output {
         capabilities.push("structured output");
     }
+    if model.tool_calling {
+        capabilities.push("workspace tools");
+    }
+    if model.thinking {
+        capabilities.push("thinking");
+    }
     let description = if capabilities.is_empty() {
         "Ollama model".to_string()
     } else {
@@ -188,14 +228,23 @@ fn provider_mode(model: &OllamaModel) -> ProviderMode {
         id: model.model.clone(),
         label: model.name.clone(),
         description,
-        default_reasoning_effort: String::new(),
-        reasoning_efforts: Vec::new(),
+        default_reasoning_effort: if model.thinking {
+            "medium".into()
+        } else {
+            String::new()
+        },
+        reasoning_efforts: if model.thinking {
+            vec!["low".into(), "medium".into(), "high".into()]
+        } else {
+            Vec::new()
+        },
     }
 }
 
 fn capabilities(model: Option<&OllamaModel>) -> ProviderCapabilities {
     let vision = model.is_some_and(|value| value.vision);
     let structured_output = model.is_some_and(|value| value.structured_output);
+    let tool_calling = model.is_some_and(|value| value.tool_calling);
     ProviderCapabilities {
         text_input: true,
         image_input: vision,
@@ -211,10 +260,16 @@ fn capabilities(model: Option<&OllamaModel>) -> ProviderCapabilities {
         } else {
             0
         },
+        tool_calling,
     }
 }
 
 pub(crate) async fn detect_status(state: &AppState) -> ProviderStatus {
+    tracing::debug!(
+        target: "ollama",
+        event = "provider_status_started",
+        "Ollama provider status check started"
+    );
     let settings = match load_settings(state) {
         Ok(value) => value,
         Err(error) => {
@@ -371,6 +426,15 @@ fn ollama_status(
             .find(|model| model.model == settings.model || model.name == settings.model)
     };
     let modes = models.iter().map(provider_mode).collect();
+    tracing::debug!(
+        target: "ollama",
+        event = "provider_status_completed",
+        status = %status,
+        model_count = models.len(),
+        endpoint = ?base_url,
+        selected_model = %settings.model,
+        "Ollama provider status check completed"
+    );
     ProviderStatus {
         id: "ollama".into(),
         name: "Ollama".into(),
@@ -420,6 +484,17 @@ pub(crate) async fn selected_model(
         },
         Some(details),
     );
+    tracing::debug!(
+        target: "ollama",
+        event = "selected_model_resolved",
+        endpoint = %client.base_url(),
+        model = %model.model,
+        vision = model.vision,
+        structured_output = model.structured_output,
+        tool_calling = model.tool_calling,
+        thinking = model.thinking,
+        "Ollama selected model resolved"
+    );
     Ok((client, model))
 }
 
@@ -443,13 +518,29 @@ pub(crate) fn request(
     model: &OllamaModel,
     messages: Vec<OllamaChatMessage>,
     format: Option<serde_json::Value>,
+    reasoning_effort: Option<&str>,
 ) -> OllamaChatRequest {
     OllamaChatRequest {
         model: model.model.clone(),
         messages,
         stream: true,
         format,
+        tools: None,
+        think: thinking_value(model, reasoning_effort),
     }
+}
+
+pub(crate) fn thinking_value(
+    model: &OllamaModel,
+    reasoning_effort: Option<&str>,
+) -> Option<serde_json::Value> {
+    if !model.thinking {
+        return None;
+    }
+    reasoning_effort
+        .filter(|value| matches!(value.trim(), "low" | "medium" | "high" | "max"))
+        .map(|value| serde_json::Value::String(value.trim().to_string()))
+        .or(Some(serde_json::Value::Bool(true)))
 }
 
 pub(crate) fn load_history(
@@ -461,19 +552,64 @@ pub(crate) fn load_history(
         .lock()
         .map_err(|_| CommandError::new("database_locked", "Database lock was poisoned"))?;
     let mut statement = connection.prepare(
-        "SELECT role, content FROM messages WHERE conversation_id=?1 AND status='completed' ORDER BY created_at, rowid",
+        "SELECT role, content, metadata_json, status FROM messages WHERE conversation_id=?1 ORDER BY created_at, rowid",
     )?;
     let rows = statement.query_map([conversation_id], |row| {
-        Ok(OllamaChatMessage::text(
+        Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
         ))
     })?;
-    Ok(rows
-        .filter_map(Result::ok)
-        .filter(|message| !message.content.trim().is_empty())
-        .filter(|message| matches!(message.role.as_str(), "user" | "assistant" | "system"))
-        .collect())
+    let mut history = Vec::new();
+    let mut latest_transcript = None;
+    let mut trailing_messages = Vec::new();
+    for row in rows {
+        let (role, content, metadata_json, status) = row?;
+        let metadata = serde_json::from_str::<Value>(&metadata_json)
+            .map_err(|error| CommandError::new("invalid_ollama_history", error.to_string()))?;
+        if let Some(transcript) = metadata
+            .get("ollamaTranscript")
+            .and_then(Value::as_array)
+        {
+            let mut parsed_transcript = Vec::with_capacity(transcript.len());
+            for message in transcript {
+                let message = serde_json::from_value::<OllamaChatMessage>(message.clone())
+                    .map_err(|error| {
+                        CommandError::new("invalid_ollama_history", error.to_string())
+                    })?;
+                if message.role != "system"
+                    && (!message.content.trim().is_empty()
+                    || message
+                        .tool_calls
+                        .as_ref()
+                        .is_some_and(|calls| !calls.is_empty()))
+                {
+                    parsed_transcript.push(message);
+                }
+            }
+            latest_transcript = Some(parsed_transcript);
+            trailing_messages.clear();
+            continue;
+        }
+        let message = OllamaChatMessage::text(role.clone(), content);
+        if status == "completed"
+            && !message.content.trim().is_empty()
+            && matches!(role.as_str(), "user" | "assistant" | "system")
+        {
+            if latest_transcript.is_some() {
+                trailing_messages.push(message);
+            } else {
+                history.push(message);
+            }
+        }
+    }
+    if let Some(mut transcript) = latest_transcript {
+        transcript.extend(trailing_messages);
+        history = transcript;
+    }
+    Ok(history)
 }
 
 pub(crate) fn set_latest_user_content(
@@ -492,6 +628,14 @@ pub(crate) fn set_latest_user_content(
     };
     message.content = content.into();
     Ok(())
+}
+
+pub(crate) fn format_prompt_for_agent(prompt: &str, context: &str) -> String {
+    if context.trim().is_empty() {
+        prompt.to_string()
+    } else {
+        format!("{prompt}\n\nSELECTED CONTEXT:\n{context}")
+    }
 }
 
 pub(crate) fn attach_images(
@@ -603,6 +747,14 @@ fn save_ollama_settings_inner(
         "INSERT INTO provider_settings(provider,enabled,settings_json,updated_at) VALUES (?1,1,?2,?3) ON CONFLICT(provider) DO UPDATE SET enabled=1,settings_json=excluded.settings_json,updated_at=excluded.updated_at",
         params![OLLAMA_PROVIDER_KEY, serde_json::to_string(&settings).map_err(|error| CommandError::new("invalid_ollama_settings", error.to_string()))?, Utc::now().to_rfc3339()],
     )?;
+    tracing::debug!(
+        target: "ollama",
+        event = "settings_saved",
+        endpoint = %settings.base_url,
+        model = %settings.model,
+        has_token = !settings.bearer_token.is_empty(),
+        "Ollama settings saved"
+    );
     Ok(public_settings(&settings))
 }
 
@@ -626,6 +778,13 @@ async fn test_ollama_connection_inner(
     input: Option<OllamaSettingsInput>,
     state: &AppState,
 ) -> CommandResult<ProviderConnectionTest> {
+    let started = std::time::Instant::now();
+    tracing::debug!(
+        target: "ollama",
+        event = "connection_test_started",
+        has_input = input.is_some(),
+        "Ollama connection test started"
+    );
     let settings = if let Some(input) = input {
         let base_url = if input.base_url.trim().is_empty() {
             DEFAULT_OLLAMA_BASE_URL.to_string()
@@ -670,7 +829,7 @@ async fn test_ollama_connection_inner(
             )
         })?;
     }
-    Ok(ProviderConnectionTest {
+    let result = ProviderConnectionTest {
         ok: true,
         detail: if settings.model.is_empty() {
             format!(
@@ -683,14 +842,23 @@ async fn test_ollama_connection_inner(
                 settings.base_url, settings.model
             )
         },
-    })
+    };
+    tracing::debug!(
+        target: "ollama",
+        event = "connection_test_completed",
+        endpoint = %settings.base_url,
+        model = %settings.model,
+        duration_ms = started.elapsed().as_millis() as u64,
+        "Ollama connection test completed"
+    );
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         capabilities, draft_prompt, model_from_tag, ollama_status, provider_mode,
-        save_ollama_settings_inner, structured_format, validate_reference_images,
+        save_ollama_settings_inner, structured_format, thinking_value, validate_reference_images,
         test_ollama_connection_inner, OllamaSettingsInput, StoredOllamaSettings,
     };
     use crate::ollama_transport::{OllamaShowResponse, OllamaTag};
@@ -724,6 +892,59 @@ mod tests {
         assert!(capabilities.structured_output);
         assert_eq!(capabilities.maximum_reference_images, 10);
         assert!(provider_mode(&model).description.contains("vision"));
+    }
+
+    #[test]
+    fn maps_tool_and_thinking_capabilities_to_agent_controls() {
+        let model = model_from_tag(
+            OllamaTag {
+                name: "agent:latest".into(),
+                model: None,
+                modified_at: None,
+                size: None,
+                digest: None,
+                details: None,
+            },
+            Some(OllamaShowResponse {
+                capabilities: vec!["completion".into(), "TOOLS".into(), "thinking".into()],
+                details: None,
+                modified_at: None,
+            }),
+        );
+        let provider = capabilities(Some(&model));
+        assert!(provider.tool_calling);
+        assert_eq!(
+            provider_mode(&model).reasoning_efforts,
+            vec!["low", "medium", "high"]
+        );
+        assert_eq!(provider_mode(&model).default_reasoning_effort, "medium");
+    }
+
+    #[test]
+    fn sends_selected_thinking_level_to_ollama_when_supported() {
+        let model = model_from_tag(
+            OllamaTag {
+                name: "thinker:latest".into(),
+                model: None,
+                modified_at: None,
+                size: None,
+                digest: None,
+                details: None,
+            },
+            Some(OllamaShowResponse {
+                capabilities: vec!["thinking".into()],
+                details: None,
+                modified_at: None,
+            }),
+        );
+        assert_eq!(
+            thinking_value(&model, Some("high")),
+            Some(serde_json::json!("high"))
+        );
+        assert_eq!(
+            thinking_value(&model, Some("unsupported")),
+            Some(serde_json::json!(true))
+        );
     }
 
     #[test]

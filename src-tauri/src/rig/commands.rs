@@ -124,6 +124,14 @@ pub fn list_rigs(
     worktree_id: Option<String>,
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<Rig>> {
+    list_rigs_inner(&workspace_id, worktree_id.as_deref(), &state)
+}
+
+pub(crate) fn list_rigs_inner(
+    workspace_id: &str,
+    worktree_id: Option<&str>,
+    state: &AppState,
+) -> CommandResult<Vec<Rig>> {
     let connection = state
         .db
         .lock()

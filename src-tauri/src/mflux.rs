@@ -562,6 +562,9 @@ fn prompt_requests_animation(prompt: &str) -> bool {
         "cast",
         "explosion",
         "effect",
+        "sprite sheet",
+        "spritesheet",
+        "frame set",
     ]
     .iter()
     .any(|term| lower.contains(term))
@@ -1203,6 +1206,12 @@ mod tests {
         options.command = None;
         assert!(generation_allowed(&options, "create a walking warrior"));
         options.native_rig_master_only = false;
+        assert!(generation_allowed(
+            &options,
+            "Rear view of a yellow hatchback car with turning left and right sprite sheet."
+        ));
+        assert!(generation_allowed(&options, "create a spritesheet of a rolling coin"));
+        assert!(generation_allowed(&options, "generate a frame set for a torch"));
         assert!(!generation_allowed(&options, "tell me about sprites"));
     }
 

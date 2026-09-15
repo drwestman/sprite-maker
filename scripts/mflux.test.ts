@@ -61,6 +61,9 @@ describe("MFLUX provider readiness", () => {
   test("given a prompt when animation inference runs then it matches backend semantics", () => {
     expect(mfluxAnimationRequested("animate", "make a walk cycle")).toBe(true);
     expect(mfluxAnimationRequested(undefined, "create a looping idle animation")).toBe(true);
+    expect(mfluxAnimationRequested(undefined, "Rear view of a yellow hatchback car with turning left and right sprite sheet.")).toBe(true);
+    expect(mfluxAnimationRequested(undefined, "create a spritesheet of a rolling coin")).toBe(true);
+    expect(mfluxAnimationRequested(undefined, "generate a frame set for a torch")).toBe(true);
     expect(mfluxAnimationRequested(undefined, "create a static treasure chest")).toBe(false);
     expect(mfluxAnimationRequested("sprite", "create an animated treasure chest")).toBe(false);
   });

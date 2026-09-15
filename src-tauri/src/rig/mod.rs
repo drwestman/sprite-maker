@@ -40,9 +40,9 @@ pub use types::{
 #[allow(unused_imports)]
 pub use validate::validate_rig;
 
-pub(crate) use commands::capture_chat_suggestion;
 #[allow(unused_imports)]
 pub(crate) use commands::save_rig_inner;
+pub(crate) use commands::{capture_chat_suggestion, list_rigs_inner};
 #[allow(unused_imports)]
 pub(crate) use fit::{capsule_coverage, detect_morphology};
 #[allow(unused_imports)]

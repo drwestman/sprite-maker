@@ -89,6 +89,8 @@ pub struct ProviderCapabilities {
     pub video_animation: bool,
     pub image_to_image: bool,
     pub maximum_reference_images: u32,
+    #[serde(default)]
+    pub tool_calling: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -46,7 +46,7 @@
   import {
     type ActiveChatRequest, animationFrameAssets, appendAssistantDelta, appendConversationActivity, buildChatContext,
     applyAnimationPolishModeToPrompt, buildFullRedrawPrompt, buildMotionPrompt, buildProviderOptions, buildRigPolishPrompt, chatActivityLines, clearRunningRequest, parallelGenerationsInWorkspace,
-    generationRequestFromProfile, inferChatCommand, isTerminalProviderEvent, unacceptedGenerationNotice,
+    generationRequestFromProfile, inferChatCommand, isFreshGenerationManifest, isTerminalProviderEvent, unacceptedGenerationNotice,
   } from "$lib/chat-generation-finalize";
   import { mfluxReferenceRequired, selectMfluxReferenceId } from "$lib/mflux";
   import {
@@ -220,7 +220,11 @@
       const source=saved&&typeof saved==="object"?saved as Record<string,unknown>:{};
       const savedModel=typeof source.model==="string"?source.model.trim():"";
       next.model=selectProviderModel(savedModel,provider?.model,provider?.modes);
-      next.reasoningEffort="";
+      const selectedMode=provider?.modes.find(mode=>mode.id===next.model);
+      const savedEffort=typeof source.reasoningEffort==="string"?source.reasoningEffort:"";
+      next.reasoningEffort=selectedMode?.reasoningEfforts.includes(savedEffort)
+        ? savedEffort
+        : selectedMode?.defaultReasoningEffort ?? "";
     }
     return next;
   }
@@ -376,6 +380,12 @@
     else if(handoff.kind==="sprite"){selectedAsset=handoff.asset;viewedAsset=undefined;activeTab="sprites";if(handoff.analyzeRig){void api.analyzeRigFit(result.ordered[0].id).then(report=>{const top=report.detections[0];if(top)notify(`Rig check: ${top.morphology} ${Math.round(top.confidence*100)}%${report.warnings.length?" (needs a cleaner master)":""} — open the Rig tab to animate it with points`);}).catch(()=>undefined);}}
     else if(handoff.kind==="unaccepted"){notify(unacceptedGenerationNotice(handoff.rejectedStaticAnimation),"error");}
   }
+  async function directOllamaCreatedGeneration(request:ActiveChatRequest,response:string,payload:ProviderEvent):Promise<boolean>{
+    if(payload.provider!=="ollama"||request.command||request.phase||!request.generation)return false;
+    const manifest=await api.getGenerationManifest(request.workspaceId).catch(()=>null);
+    const fingerprint=manifest?await api.getGenerationFingerprint(request.workspaceId).catch(()=>null):null;
+    return isFreshGenerationManifest(manifest,fingerprint,request.previousGenerationFingerprint,request.startedAt,response,parallelGenerationsInWorkspace(runningRequests,request.workspaceId));
+  }
   async function reconcileGenerationManifest() {if(!workspace)return;const result=await reconcileManifestData(workspace.id,assets,animations,selectedWorktree?.id,activeWorktreeId(),await currentMotionPlan());if(!result)return;if(result.worktreeAssetIds)worktreeAssetIds=result.worktreeAssetIds;if(result.selectedAnimation)selectedAnimation=result.selectedAnimation;if(result.animations)animations=result.animations;}
   async function hydrateLatestGeneration() {if(!workspace||!selectedConversation||!messages.length)return;const next=await hydrateGenerationData(workspace.id,selectedConversation.id,messages,assets,animations);if(next)messages=next;}
   function editAssetFromChat(asset:Asset){selectedAsset=asset;viewedAsset=asset;activeTab="sprites";}
@@ -527,7 +537,10 @@
       if(isTerminalProviderEvent(payload.eventType)){
         const request=runningRequests[payload.conversationId];
         let deferProviderClear=false;
-        if(payload.eventType==="completed"&&request&&(request.phase==="master"||(request.command&&request.command!=="rig"))){
+        const directGeneration=payload.eventType==="completed"&&request
+          ? await directOllamaCreatedGeneration(request,payload.content,payload)
+          : false;
+        if(payload.eventType==="completed"&&request&&(request.phase==="master"||(request.command&&request.command!=="rig")||directGeneration)){
           activityByConversation=appendConversationActivity(activityByConversation,payload.conversationId,["Registering the generated sprite"]);
           try{
             if(request.phase==="master"){

@@ -11,6 +11,8 @@ mod headless;
 mod image_providers;
 mod modes;
 mod ollama;
+mod ollama_agent;
+mod ollama_tools;
 mod prompt;
 mod run;
 mod stream;

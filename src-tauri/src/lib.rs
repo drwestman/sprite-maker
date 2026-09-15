@@ -5,11 +5,13 @@ mod conversations;
 mod database;
 mod error;
 mod jobs;
+mod logging;
 mod mflux;
 mod mcp;
 mod models;
 mod motion_planner;
 mod ollama;
+mod ollama_logging;
 mod ollama_transport;
 mod packs;
 mod providers;
@@ -197,6 +199,7 @@ pub fn run() {
             let data_directory = app.path().app_data_dir().map_err(|error| {
                 format!("Could not resolve application data directory: {error}")
             })?;
+            logging::initialize(&data_directory)?;
             let connection = database::open(&data_directory.join("sprite-studio.sqlite3"))?;
             app.manage(AppState::from_connection(connection));
             Ok(())
@@ -310,6 +313,10 @@ pub fn run() {
 }
 
 pub fn run_mcp() {
+    if let Err(error) = logging::initialize(&app_data_dir()) {
+        eprintln!("Sprite Studio logging failed: {error}");
+        std::process::exit(1);
+    }
     if let Err(error) = mcp::run() {
         eprintln!("Sprite Studio MCP failed: {error}");
         std::process::exit(1);

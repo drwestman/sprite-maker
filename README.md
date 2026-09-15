@@ -20,7 +20,7 @@ Generating one attractive image is easy. A production asset also needs a stable 
 
 Sprite Studio keeps that work in one desktop workspace. Describe an asset in chat, attach or paste references, inspect the result at pixel scale, generate a high-frame-count AI animation with strict identity and neighbor references, test the loop, and export a sheet without losing the source files or the conversation that produced them.
 
-The project is open source, local first, and built with Tauri, Svelte, Rust, SQLite, and an installed Codex, Cursor, or Antigravity CLI. It does not target Android or iOS.
+The project is open source, local first, and built with Tauri, Svelte, Rust, SQLite, and an installed Codex, Cursor, Antigravity, or Ollama provider. It does not target Android or iOS.
 
 ## The workflow
 
@@ -108,6 +108,7 @@ Terrain requests produce one large PNG atlas with compatible fills, edges, corne
 - A lightweight playground for checking movement, scale, bounds, pivots, and playback speed
 - Procedural and ImageGen-assisted VFX workflows
 - Cancellable background jobs and per-chat loading indicators
+- Direct Ollama workspace-agent conversations with bounded file tools, shell commands, asset inspection, quality reports, transcript resume, streamed activity, and structured-tool fallback
 - Content-hashed asset versions and non-destructive repair output
 - Deterministic checks for dimensions, alpha boundaries, duplicates, continuity, alignment, scale, palette, motion plausibility, and seamless loops
 
@@ -178,7 +179,7 @@ VFX worktrees add their effect tools without removing the rest of the workbench.
 - [Bun](https://bun.sh/)
 - Stable [Rust](https://www.rust-lang.org/tools/install)
 - The native prerequisites required by Tauri 2 for your desktop operating system
-- An installed Codex CLI, Cursor CLI (`agent`), or Antigravity CLI (`agy`) for live agent conversations and access to its reported models
+- An installed Codex CLI, Cursor CLI (`agent`), Antigravity CLI (`agy`), or a reachable Ollama endpoint for live agent conversations and access to its reported models
 - Cursor 2.4 or later when using Cursor Image (native GenerateImage). Authenticate with `agent login` or `CURSOR_API_KEY`
 - Antigravity CLI when using Antigravity Image (native `generate_image`). Authenticate with an interactive `agy` session from Settings → Providers
 - Optional MFLUX Z-Image Turbo generation requires Apple Silicon macOS and Python 3.11. Install or repair it from Settings → Image generation; Intel Macs, Linux, and Windows show MFLUX as unavailable.
@@ -196,6 +197,12 @@ bun tauri dev
 MFLUX is an opt-in local image provider. The app installs the pinned Python 3.11 environment with `mflux==0.19.1` and `mlx==0.32.0`, then downloads the pinned Z-Image Turbo checkpoint only when the first generation starts. The managed runtime, worker, and checkpoint cache stay under the application-data directory shown in Settings, never inside a project. Setup can be cancelled and resumed; a failed setup or checkpoint compatibility check fails closed without falling back to another image provider.
 
 MFLUX supports static `/sprite`, `/character`, `/effect`, and `/pack` generations plus `/animate` requests that generate the master and every ordered animation frame. Text-to-image and one-reference image-to-image are available; image-to-image uses one focused reference, exactly one active reference, or the selected animation master. Explicit Rig-only workflows remain deterministic native rendering, while ordinary chat and `/rig` stay on the selected agent provider.
+
+### Ollama workspace agent
+
+Ollama conversations use the selected model directly through `/api/chat`. Models that advertise native tools can read, write, edit, move, and delete workspace files, run bounded commands, inspect assets, animations, rigs, and packs, export assets or animation sheets, queue spritesheet/VFX jobs, read job and quality status, and query generation status. Models with structured output but no native tool capability use a strict JSON tool envelope instead. Every path is rooted in the selected workspace, symlink escapes are rejected, shell output is bounded, commands are cancellable, and tool-aware transcript metadata is persisted with the conversation so later Ollama turns can resume context.
+
+Reference images are sent when the selected model reports vision support. Direct image generation is available through MFLUX or a configured OpenAI-compatible image provider; legacy provider-native image workflows may still use the configured generation CLI fallback. The Ollama model picker labels vision, tool, and thinking capabilities, and thinking-capable models expose low, medium, and high reasoning prompts.
 
 ### Verify the native core
 
@@ -225,6 +232,17 @@ The binary is `src-tauri/target/release/sprite-studio-mcp` (`.exe` on Windows). 
 - Interactive `agent login` / `codex login` stays out of band. The MCP only reports `studio_status`.
 
 The database path matches the desktop app (`com.jakes.sprite-maker`): `%APPDATA%\com.jakes.sprite-maker\sprite-studio.sqlite3` on Windows, `~/Library/Application Support/com.jakes.sprite-maker/` on macOS.
+
+Debug builds write Ollama diagnostics to the application data directory's `logs/`
+folder as `ollama.log.YYYY-MM-DD`, using the local calendar date and retaining the
+most recent 14 calendar days. Release builds do not initialize this file logger.
+Prompts and responses are bounded and redacted; bearer tokens, image bytes, raw file
+contents, absolute paths, and unredacted command output are not written.
+
+To list the available logs from a terminal, run
+`scripts/show-ollama-logs.sh`. Use `scripts/show-ollama-logs.sh --tail` to show the
+last 50 lines of the newest log, or pass a line count such as
+`scripts/show-ollama-logs.sh --tail 100`.
 
 ### Cursor `mcp.json`
 

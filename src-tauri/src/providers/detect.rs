@@ -152,6 +152,7 @@ pub(crate) fn detect_providers_inner(state: &AppState) -> Vec<ProviderStatus> {
             video_animation: false,
             image_to_image: true,
             maximum_reference_images: 1,
+            tool_calling: false,
         },
         configurable: false,
         has_api_key: false,
@@ -276,6 +277,7 @@ pub(crate) fn provider_capabilities(id: &str) -> ProviderCapabilities {
             video_animation: false,
             image_to_image: true,
             maximum_reference_images: 5,
+            tool_calling: true,
         },
         "claude" | "gemini" | "grok" | "cursor" | "antigravity" => ProviderCapabilities {
             text_input: true,
@@ -288,6 +290,7 @@ pub(crate) fn provider_capabilities(id: &str) -> ProviderCapabilities {
             video_animation: false,
             image_to_image: false,
             maximum_reference_images: 10,
+            tool_calling: true,
         },
         _ => ProviderCapabilities {
             text_input: true,
@@ -300,6 +303,7 @@ pub(crate) fn provider_capabilities(id: &str) -> ProviderCapabilities {
             video_animation: false,
             image_to_image: false,
             maximum_reference_images: 0,
+            tool_calling: false,
         },
     }
 }
